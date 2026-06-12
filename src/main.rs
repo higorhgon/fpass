@@ -1,3 +1,5 @@
+use sha2::{Sha256, Digest};
+
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -11,9 +13,12 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::{
-    io::{self, Write},
+    collections::HashMap,
+    fs::{self, OpenOptions},
+    io::{self, BufRead, BufReader, Write},
+    path::PathBuf,
     process::{Command, Stdio},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(PartialEq, Clone, Copy)]
@@ -25,6 +30,87 @@ enum AppMode {
     AddPassword,
     EditPassword,
     ConfirmDelete,
+}
+
+// ==========================================
+// MOTOR DE FRECENCY (Seguro com SHA-256)
+// ==========================================
+
+struct History {
+    records: HashMap<String, (u32, u64)>, // hash -> (count, timestamp_last_used)
+    file_path: PathBuf,
+}
+
+impl History {
+    fn new() -> Self {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let file_path = PathBuf::from(format!("{}/.fpass_history", home));
+        let mut records = HashMap::new();
+
+        if let Ok(file) = fs::File::open(&file_path) {
+            for line in BufReader::new(file).lines().flatten() {
+                let parts: Vec<&str> = line.splitn(3, '|').collect();
+                if parts.len() == 3 {
+                    if let (Ok(count), Ok(ts)) = (parts[1].parse(), parts[2].parse()) {
+                        records.insert(parts[0].to_string(), (count, ts));
+                    }
+                }
+            }
+        }
+        Self { records, file_path }
+    }
+
+    // Função privada para gerar o hash irreversível
+    fn hash_item(item: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(item.as_bytes());
+        let result = hasher.finalize();
+        result.iter().map(|b| format!("{:02x}", b)).collect()
+    }
+
+    fn record_use(&mut self, item: &str) {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let hashed_item = Self::hash_item(item); // Criptografa antes de usar
+        
+        let entry = self.records.entry(hashed_item).or_insert((0, 0));
+        entry.0 += 1;
+        entry.1 = now;
+        self.save();
+    }
+
+    fn save(&self) {
+        if let Ok(mut file) = OpenOptions::new().write(true).create(true).truncate(true).open(&self.file_path) {
+            for (hash, (count, ts)) in &self.records {
+                let _ = writeln!(file, "{}|{}|{}", hash, count, ts);
+            }
+        }
+    }
+
+    fn get_score(&self, item: &str) -> u64 {
+        let hashed_item = Self::hash_item(item); // Criptografa para comparar
+        
+        if let Some(&(count, ts)) = self.records.get(&hashed_item) {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let age = now.saturating_sub(ts);
+            
+            let weight = if age < 86400 { 100 }
+            else if age < 604800 { 50 }
+            else if age < 2592000 { 20 }
+            else { 5 };
+            
+            (count as u64) * weight
+        } else {
+            0
+        }
+    }
+
+    fn sort_items(&self, items: &mut Vec<String>) {
+        items.sort_by(|a, b| {
+            let score_a = self.get_score(a);
+            let score_b = self.get_score(b);
+            score_b.cmp(&score_a).then_with(|| a.cmp(b))
+        });
+    }
 }
 
 // ==========================================
@@ -52,9 +138,7 @@ impl DbApp {
             last_key_was_g: false,
             list_height: 10,
         };
-        if !app.filtered.is_empty() {
-            app.list_state.select(Some(0));
-        }
+        if !app.filtered.is_empty() { app.list_state.select(Some(0)); }
         app
     }
 
@@ -68,7 +152,6 @@ impl DbApp {
         self.list_state.select(if self.filtered.is_empty() { None } else { Some(0) });
     }
 
-    // Navegação (Compartilhada conceitualmente com o app principal)
     fn next(&mut self) {
         if self.filtered.is_empty() { return; }
         let i = match self.list_state.selected() {
@@ -85,12 +168,8 @@ impl DbApp {
         };
         self.list_state.select(Some(i));
     }
-    fn go_to_top(&mut self) {
-        if !self.filtered.is_empty() { self.list_state.select(Some(0)); }
-    }
-    fn go_to_bottom(&mut self) {
-        if !self.filtered.is_empty() { self.list_state.select(Some(self.filtered.len() - 1)); }
-    }
+    fn go_to_top(&mut self) { if !self.filtered.is_empty() { self.list_state.select(Some(0)); } }
+    fn go_to_bottom(&mut self) { if !self.filtered.is_empty() { self.list_state.select(Some(self.filtered.len() - 1)); } }
     fn half_page_down(&mut self) {
         if self.filtered.is_empty() { return; }
         let step = (self.list_height.saturating_sub(2) / 2).max(1);
@@ -106,7 +185,7 @@ impl DbApp {
 }
 
 // ==========================================
-// APLICATIVO 2: GERENCIADOR DE SENHAS (PRINCIPAL)
+// APLICATIVO 2: GERENCIADOR DE SENHAS
 // ==========================================
 
 struct App {
@@ -122,20 +201,19 @@ struct App {
     add_user: String,
     message: Option<(String, Instant, bool)>,
     is_mac: bool,
-    
-    // Controle de Navegação
+    history: History,
     last_key_was_g: bool,
     list_height: usize,
 }
 
 impl App {
-    fn new(db_path: String, password: String, is_mac: bool) -> Self {
+    fn new(db_path: String, password: String, is_mac: bool, history: History) -> Self {
         let mut app = Self {
             db_path, password,
             entries: vec![], filtered: vec![],
             search_query: String::new(), list_state: ListState::default(),
             mode: AppMode::Search, input_buffer: String::new(), add_path: String::new(), add_user: String::new(),
-            message: None, is_mac, last_key_was_g: false, list_height: 10,
+            message: None, is_mac, history, last_key_was_g: false, list_height: 10,
         };
         app.refresh_entries();
         app
@@ -149,6 +227,9 @@ impl App {
             if let Ok(output) = child.wait_with_output() {
                 let out_str = String::from_utf8_lossy(&output.stdout);
                 self.entries = out_str.lines().map(|s| s.trim()).filter(|s| !s.is_empty() && !s.ends_with('/')).map(String::from).collect();
+                
+                // ORDENA A LISTA USANDO O FRECENCY ANTES DE FILTRAR
+                self.history.sort_items(&mut self.entries);
             }
         }
         self.apply_filter();
@@ -180,12 +261,8 @@ impl App {
         };
         self.list_state.select(Some(i));
     }
-    fn go_to_top(&mut self) {
-        if !self.filtered.is_empty() { self.list_state.select(Some(0)); }
-    }
-    fn go_to_bottom(&mut self) {
-        if !self.filtered.is_empty() { self.list_state.select(Some(self.filtered.len() - 1)); }
-    }
+    fn go_to_top(&mut self) { if !self.filtered.is_empty() { self.list_state.select(Some(0)); } }
+    fn go_to_bottom(&mut self) { if !self.filtered.is_empty() { self.list_state.select(Some(self.filtered.len() - 1)); } }
     fn half_page_down(&mut self) {
         if self.filtered.is_empty() { return; }
         let step = (self.list_height.saturating_sub(2) / 2).max(1);
@@ -199,16 +276,14 @@ impl App {
         self.list_state.select(Some(i.saturating_sub(step)));
     }
 
-    fn get_selected(&self) -> Option<String> {
-        self.list_state.selected().map(|i| self.filtered[i].clone())
-    }
-    fn set_msg(&mut self, msg: &str, is_error: bool) {
-        self.message = Some((msg.to_string(), Instant::now(), is_error));
-    }
+    fn get_selected(&self) -> Option<String> { self.list_state.selected().map(|i| self.filtered[i].clone()) }
+    fn set_msg(&mut self, msg: &str, is_error: bool) { self.message = Some((msg.to_string(), Instant::now(), is_error)); }
 
-    // Ações de Backend omitidas para manter curto (mas funcionam idênticas ao código anterior)
     fn copy_password(&mut self) {
         if let Some(entry) = self.get_selected() {
+            // REGISTRA O USO DA SENHA PARA O FRECENCY AUMENTAR O SCORE
+            self.history.record_use(&entry);
+
             let mut cmd = Command::new("keepassxc-cli");
             cmd.args(["show", "-q", &self.db_path, &entry, "-a", "Password"]).stdin(Stdio::piped()).stdout(Stdio::piped());
             if let Ok(mut child) = cmd.spawn() {
@@ -235,6 +310,7 @@ impl App {
         if let Ok(mut child) = cmd.spawn() {
             if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(format!("{}\n{}\n{}\n", self.password, new_pass, new_pass).as_bytes()); }
             if child.wait().map(|s| s.success()).unwrap_or(false) {
+                self.history.record_use(&self.add_path); // Dá score imediato para a nova entrada
                 self.set_msg("Entrada adicionada!", false); self.refresh_entries();
             } else { self.set_msg("Erro ao adicionar.", true); }
         }
@@ -282,25 +358,28 @@ fn spawn_clipboard_clearer(password: String, is_mac: bool) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let is_mac = std::env::consts::OS == "macos";
+    let mut history = History::new();
     
-    // 1. Busca os bancos e inicia interface de seleção (se necessário)
-    let dbs = find_databases();
+    // Busca, ordena pelo histórico, e inicia interface de seleção
+    let mut dbs = find_databases();
+    history.sort_items(&mut dbs);
+
     let db_path = if dbs.is_empty() {
         println!("Nenhum arquivo .kdbx encontrado.");
         std::process::exit(1);
     } else if dbs.len() == 1 {
         dbs[0].clone()
     } else {
-        // Inicia o terminal gráfico Apenas para escolher o banco
         run_selection_tui(dbs)?
     };
 
-    // 2. Coleta a senha com prompt limpo no terminal padrão
+    // Registra o uso do DB escolhido para subir no ranking na próxima execução
+    history.record_use(&db_path);
+
     print!("[KeePassXC] Senha para '{}': ", db_path);
     io::stdout().flush()?;
     let password = rpassword::read_password()?;
 
-    // Testa senha
     let mut test_cmd = Command::new("keepassxc-cli").args(["ls", "-q", &db_path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
     if let Some(mut stdin) = test_cmd.stdin.take() { let _ = stdin.write_all(format!("{}\n", password).as_bytes()); }
     if !test_cmd.wait()?.success() {
@@ -308,14 +387,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    // 3. Inicia o app principal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(db_path, password, is_mac);
+    let mut app = App::new(db_path, password, is_mac, history);
     let res = run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;
@@ -335,18 +413,15 @@ fn find_databases() -> Vec<String> {
     vec![]
 }
 
-// --- LOOP DO SELETOR DE DB ---
 fn run_selection_tui(dbs: Vec<String>) -> Result<String, Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
-
     let mut app = DbApp::new(dbs);
-    let mut selected = None;
 
-    loop {
+    let selected = loop {
         terminal.draw(|f| {
             let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)]).split(f.size());
             app.list_height = chunks[1].height as usize;
@@ -366,7 +441,6 @@ fn run_selection_tui(dbs: Vec<String>) -> Result<String, Box<dyn std::error::Err
             if let Event::Key(key) = event::read()? {
                 let mut is_g_key = false;
 
-                // Controles universais em ambos os modos
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     match key.code {
                         KeyCode::Char('d') => app.half_page_down(),
@@ -382,7 +456,7 @@ fn run_selection_tui(dbs: Vec<String>) -> Result<String, Box<dyn std::error::Err
                         KeyCode::Esc => app.mode = AppMode::Normal,
                         KeyCode::Down => app.next(),
                         KeyCode::Up => app.previous(),
-                        KeyCode::Enter => { if let Some(i) = app.list_state.selected() { selected = Some(app.filtered[i].clone()); break; } },
+                        KeyCode::Enter => { if let Some(i) = app.list_state.selected() { break app.filtered[i].clone(); } },
                         KeyCode::Backspace => { app.search_query.pop(); app.apply_filter(); }
                         KeyCode::Char(c) => { app.search_query.push(c); app.apply_filter(); }
                         _ => {}
@@ -397,7 +471,7 @@ fn run_selection_tui(dbs: Vec<String>) -> Result<String, Box<dyn std::error::Err
                             is_g_key = true;
                             if app.last_key_was_g { app.go_to_top(); is_g_key = false; }
                         }
-                        KeyCode::Enter => { if let Some(i) = app.list_state.selected() { selected = Some(app.filtered[i].clone()); break; } },
+                        KeyCode::Enter => { if let Some(i) = app.list_state.selected() { break app.filtered[i].clone(); } },
                         _ => {}
                     },
                     _ => {}
@@ -405,15 +479,14 @@ fn run_selection_tui(dbs: Vec<String>) -> Result<String, Box<dyn std::error::Err
                 app.last_key_was_g = is_g_key;
             }
         }
-    }
+    };
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
-    Ok(selected.unwrap())
+    Ok(selected)
 }
 
-// --- LOOP PRINCIPAL DO APP ---
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     loop {
         terminal.draw(|f| draw_ui(f, app))?;
@@ -422,7 +495,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
             if let Event::Key(key) = event::read()? {
                 let mut is_g_key = false;
 
-                // CORREÇÃO: Verifica explicitamente o CTRL isolado primeiro
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     if app.mode == AppMode::Search || app.mode == AppMode::Normal {
                         match key.code {
@@ -434,9 +506,8 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                             KeyCode::Char('c') => return Ok(()),
                             _ => {}
                         }
-                        continue; // Processou o Ctrl, recomeça o loop
+                        continue;
                     } else if key.code == KeyCode::Char('c') {
-                        // Permite usar Ctrl+C para forçar a saída mesmo dentro dos modais de adição/edição
                         return Ok(());
                     }
                 }
@@ -493,8 +564,6 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
 
 fn draw_ui(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)]).split(f.size());
-    
-    // Atualiza a altura disponível da lista para calcular meia página
     app.list_height = chunks[1].height as usize;
 
     let (search_text, search_color) = if app.mode == AppMode::Search { (format!(" {}█ ", app.search_query), Color::Yellow) } else { (format!(" {} ", app.search_query), Color::DarkGray) };
