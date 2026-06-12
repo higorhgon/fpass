@@ -455,9 +455,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dbs = find_databases(&config.search_path);
     history.sort_items(&mut dbs);
 
-    let db_path = if dbs.is_empty() { println!("Nenhum arquivo .kdbx encontrado."); std::process::exit(1); } 
-    else if dbs.len() == 1 { dbs[0].clone() } 
-    else { run_selection_tui(dbs, theme.clone())? };
+    let db_path = if dbs.is_empty() {
+        println!("Nenhum arquivo .kdbx encontrado.");
+        std::process::exit(1);
+    } else if dbs.len() == 1 {
+        dbs[0].clone()
+    } else {
+        match run_selection_tui(dbs, theme.clone())? {
+            Some(path) => path,
+            None => std::process::exit(0), // Sai do programa tranquilamente se der ESC/q
+        }
+    };
 
     history.record_use(&db_path);
 
@@ -484,42 +492,127 @@ fn find_databases(path: &str) -> Vec<String> {
     } vec![]
 }
 
-fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<String, Box<dyn std::error::Error>> {
-    enable_raw_mode()?; let mut stdout = io::stdout(); execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout); let mut terminal = Terminal::new(backend)?;
+fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    enable_raw_mode()?; 
+    let mut stdout = io::stdout(); 
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout); 
+    let mut terminal = Terminal::new(backend)?;
     let mut app = DbApp::new(dbs, theme);
 
     let selected = loop {
         terminal.draw(|f| {
-            let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)]).split(f.size());
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
+                .split(f.size());
+                
             app.list_height = chunks[1].height as usize;
 
-            let (search_text, search_color) = if app.mode == AppMode::Search { (format!(" {}█ ", app.search_query), app.theme.annotation) } else { (format!(" {} ", app.search_query), app.theme.guidance) };
-            f.render_widget(Paragraph::new(search_text).block(Block::default().title(" Filtrar Banco (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
+            let (search_text, search_color) = if app.mode == AppMode::Search { 
+                (format!(" {}█ ", app.search_query), app.theme.annotation) 
+            } else { 
+                (format!(" {} ", app.search_query), app.theme.guidance) 
+            };
+            
+            f.render_widget(
+                Paragraph::new(search_text)
+                    .block(Block::default().title(" Filtrar Banco (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), 
+                chunks[0]
+            );
 
             let list_color = if app.mode == AppMode::Normal { app.theme.title } else { app.theme.base };
             let items: Vec<ListItem> = app.filtered.iter().map(|e| ListItem::new(e.as_str())).collect();
-            let list = List::new(items).block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
+            let list = List::new(items)
+                .block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color)))
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+                .highlight_symbol(">> ");
+                
             f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
-            let footer_text = if app.mode == AppMode::Search { "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+C: Sair" } else { "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | ESC/q: Sair" };
-            f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
+            let footer_text = if app.mode == AppMode::Search { 
+                "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+C: Sair" 
+            } else { 
+                "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | ESC/q: Sair" 
+            };
+            
+            f.render_widget(
+                Paragraph::new(footer_text)
+                    .block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance)))
+                    .alignment(Alignment::Center), 
+                chunks[2]
+            );
         })?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 let mut is_g_key = false;
-                if key.modifiers.contains(KeyModifiers::CONTROL) { match key.code { KeyCode::Char('d') => app.half_page_down(), KeyCode::Char('u') => app.half_page_up(), KeyCode::Char('c') => std::process::exit(0), _ => {} } continue; }
+                
+                // Tratamento de atalhos com CONTROL
+                if key.modifiers.contains(KeyModifiers::CONTROL) { 
+                    match key.code { 
+                        KeyCode::Char('d') => app.half_page_down(), 
+                        KeyCode::Char('u') => app.half_page_up(), 
+                        KeyCode::Char('c') => break None, // Retorna None e sai do loop pacificamente
+                        _ => {} 
+                    } 
+                    continue; 
+                }
+                
+                // Tratamento de atalhos por modo
                 match app.mode {
-                    AppMode::Search => match key.code { KeyCode::Esc => app.mode = AppMode::Normal, KeyCode::Down => app.next(), KeyCode::Up => app.previous(), KeyCode::Enter => { if let Some(i) = app.list_state.selected() { break app.filtered[i].clone(); } }, KeyCode::Backspace => { app.search_query.pop(); app.apply_filter(); } KeyCode::Char(c) => { app.search_query.push(c); app.apply_filter(); } _ => {} },
-                    AppMode::Normal => match key.code { KeyCode::Char('q') | KeyCode::Esc => std::process::exit(0), KeyCode::Down | KeyCode::Char('j') => app.next(), KeyCode::Up | KeyCode::Char('k') => app.previous(), KeyCode::Char('/') | KeyCode::Char('f') => app.mode = AppMode::Search, KeyCode::Char('G') => app.go_to_bottom(), KeyCode::Char('g') => { is_g_key = true; if app.last_key_was_g { app.go_to_top(); is_g_key = false; } } KeyCode::Enter => { if let Some(i) = app.list_state.selected() { break app.filtered[i].clone(); } }, _ => {} },
+                    AppMode::Search => match key.code { 
+                        KeyCode::Esc => app.mode = AppMode::Normal, 
+                        KeyCode::Down => app.next(), 
+                        KeyCode::Up => app.previous(), 
+                        KeyCode::Enter => { 
+                            if let Some(i) = app.list_state.selected() { 
+                                break Some(app.filtered[i].clone()); 
+                            } 
+                        }, 
+                        KeyCode::Backspace => { 
+                            app.search_query.pop(); 
+                            app.apply_filter(); 
+                        } 
+                        KeyCode::Char(c) => { 
+                            app.search_query.push(c); 
+                            app.apply_filter(); 
+                        } 
+                        _ => {} 
+                    },
+                    AppMode::Normal => match key.code { 
+                        KeyCode::Char('q') | KeyCode::Esc => break None, // Retorna None e sai do loop pacificamente
+                        KeyCode::Down | KeyCode::Char('j') => app.next(), 
+                        KeyCode::Up | KeyCode::Char('k') => app.previous(), 
+                        KeyCode::Char('/') | KeyCode::Char('f') => app.mode = AppMode::Search, 
+                        KeyCode::Char('G') => app.go_to_bottom(), 
+                        KeyCode::Char('g') => { 
+                            is_g_key = true; 
+                            if app.last_key_was_g { 
+                                app.go_to_top(); 
+                                is_g_key = false; 
+                            } 
+                        } 
+                        KeyCode::Enter => { 
+                            if let Some(i) = app.list_state.selected() { 
+                                break Some(app.filtered[i].clone()); 
+                            } 
+                        }, 
+                        _ => {} 
+                    },
                     _ => {}
                 }
                 app.last_key_was_g = is_g_key;
             }
         }
     };
-    disable_raw_mode()?; execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?; terminal.show_cursor()?; Ok(selected)
+    
+    // Limpeza da tela (agora será executada ao sair com q, esc ou ctrl+c)
+    disable_raw_mode()?; 
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?; 
+    terminal.show_cursor()?; 
+    
+    Ok(selected)
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
