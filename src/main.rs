@@ -22,7 +22,7 @@ use std::{
 };
 
 #[derive(PartialEq, Clone, Copy)]
-enum AppMode { Search, Normal, ConfirmDelete, Form }
+enum AppMode { Search, Normal, ConfirmDelete, Form, PasswordInput }
 
 // ==========================================
 // SISTEMA DE CONFIGURAÇÃO E TEMAS (TOML)
@@ -234,18 +234,30 @@ struct DbApp {
     entries: Vec<String>, filtered: Vec<String>, search_query: String,
     list_state: ListState, mode: AppMode, last_key_was_g: bool, list_height: usize,
     theme: Theme,
+    password_input: String, selected_db: Option<String>, error_msg: Option<String>,
 }
 
 impl DbApp {
     fn new(dbs: Vec<String>, theme: Theme) -> Self {
-        let mut app = Self { entries: dbs.clone(), filtered: dbs, search_query: String::new(), list_state: ListState::default(), mode: AppMode::Search, last_key_was_g: false, list_height: 10, theme };
+        let mut app = Self { 
+            entries: dbs.clone(), filtered: dbs, search_query: String::new(), 
+            list_state: ListState::default(), mode: AppMode::Search, last_key_was_g: false, 
+            list_height: 10, theme,
+            password_input: String::new(), selected_db: None, error_msg: None
+        };
         if !app.filtered.is_empty() { app.list_state.select(Some(0)); }
+        
+        // Se só existir um banco, já pula direto para o modal de senha dele!
+        if app.entries.len() == 1 {
+            app.selected_db = Some(app.entries[0].clone());
+            app.mode = AppMode::PasswordInput;
+        }
+        
         app
     }
 
     fn apply_filter(&mut self) {
         let q = self.search_query.to_lowercase();
-        // Convertemos para String aqui, tornando os termos independentes
         let terms: Vec<String> = q.split_whitespace().map(|s| s.to_string()).collect();
         
         if terms.is_empty() { 
@@ -253,7 +265,6 @@ impl DbApp {
         } else { 
             self.filtered = self.entries.iter().filter(|e| {
                 let lower = e.to_lowercase();
-                // Agora 't' é uma String, que vive o tempo necessário
                 terms.iter().all(|t| lower.contains(t)) 
             }).cloned().collect(); 
         }
@@ -455,26 +466,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dbs = find_databases(&config.search_path);
     history.sort_items(&mut dbs);
 
-    let db_path = if dbs.is_empty() {
-        println!("Nenhum arquivo .kdbx encontrado.");
-        std::process::exit(1);
-    } else if dbs.len() == 1 {
-        dbs[0].clone()
-    } else {
+    // Agora recebemos a DB e a Senha prontas e validadas!
+    let (db_path, password) = if dbs.is_empty() { 
+        println!("Nenhum arquivo .kdbx encontrado."); 
+        std::process::exit(1); 
+    } else { 
         match run_selection_tui(dbs, theme.clone())? {
-            Some(path) => path,
-            None => std::process::exit(0), // Sai do programa tranquilamente se der ESC/q
+            Some(res) => res,
+            None => std::process::exit(0),
         }
     };
 
     history.record_use(&db_path);
-
-    print!("[KeePassXC] Senha para '{}': ", db_path); io::stdout().flush()?;
-    let password = rpassword::read_password()?;
-
-    let mut test_cmd = Command::new("keepassxc-cli").args(["ls", "-q", &db_path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
-    if let Some(mut s) = test_cmd.stdin.take() { let _ = s.write_all(format!("{}\n", password).as_bytes()); }
-    if !test_cmd.wait()?.success() { println!("Senha incorreta ou erro."); std::process::exit(1); }
 
     enable_raw_mode()?; let mut stdout = io::stdout(); execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout); let mut terminal = Terminal::new(backend)?;
@@ -492,113 +495,126 @@ fn find_databases(path: &str) -> Vec<String> {
     } vec![]
 }
 
-fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    enable_raw_mode()?; 
-    let mut stdout = io::stdout(); 
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout); 
-    let mut terminal = Terminal::new(backend)?;
+fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
+    enable_raw_mode()?; let mut stdout = io::stdout(); execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout); let mut terminal = Terminal::new(backend)?;
     let mut app = DbApp::new(dbs, theme);
 
     let selected = loop {
         terminal.draw(|f| {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)])
-                .split(f.size());
-                
+            let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)]).split(f.size());
             app.list_height = chunks[1].height as usize;
 
-            let (search_text, search_color) = if app.mode == AppMode::Search { 
-                (format!(" {}█ ", app.search_query), app.theme.annotation) 
-            } else { 
-                (format!(" {} ", app.search_query), app.theme.guidance) 
-            };
-            
-            f.render_widget(
-                Paragraph::new(search_text)
-                    .block(Block::default().title(" Filtrar Banco (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), 
-                chunks[0]
-            );
+            let (search_text, search_color) = if app.mode == AppMode::Search { (format!(" {}█ ", app.search_query), app.theme.annotation) } else { (format!(" {} ", app.search_query), app.theme.guidance) };
+            f.render_widget(Paragraph::new(search_text).block(Block::default().title(" Filtrar Banco (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
 
             let list_color = if app.mode == AppMode::Normal { app.theme.title } else { app.theme.base };
             let items: Vec<ListItem> = app.filtered.iter().map(|e| ListItem::new(e.as_str())).collect();
-            let list = List::new(items)
-                .block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color)))
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-                .highlight_symbol(">> ");
-                
+            let list = List::new(items).block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
             f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
-            let footer_text = if app.mode == AppMode::Search { 
-                "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+C: Sair" 
-            } else { 
-                "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | ESC/q: Sair" 
-            };
-            
-            f.render_widget(
-                Paragraph::new(footer_text)
-                    .block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance)))
-                    .alignment(Alignment::Center), 
-                chunks[2]
-            );
+            let footer_text = if app.mode == AppMode::Search { "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+C: Sair" } else { "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | ESC/q: Sair" };
+            f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
+
+            // DESENHA O MODAL DE SENHA SOBRE A TELA
+            if app.mode == AppMode::PasswordInput {
+                // Modal um pouco mais alto para acomodar os elementos (50 colunas x 7 linhas)
+                let modal_area = centered_fixed_rect(50, 7, f.size());
+                f.render_widget(Clear, modal_area); // Apaga o fundo
+                
+                let db_name = app.selected_db.as_deref().unwrap_or("");
+                let db_short = std::path::Path::new(db_name).file_name().unwrap_or_default().to_string_lossy();
+                
+                // 1. Container principal do modal
+                let modal_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.alert_info };
+                let modal_block = Block::default()
+                    .title(format!(" Desbloquear: {} ", db_short))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(modal_color));
+                    
+                f.render_widget(modal_block.clone(), modal_area);
+
+                // 2. Pega a área interna (dentro das bordas) do modal
+                let inner_area = modal_block.inner(modal_area);
+
+                // 3. Divide verticalmente: Margem superior(1) | Input(3) | Mensagem(2)
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Length(3), Constraint::Min(1)])
+                    .split(inner_area);
+
+                // 4. Divide horizontalmente para o input não encostar nas bordas laterais do modal
+                let input_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(10), Constraint::Percentage(80), Constraint::Percentage(10)])
+                    .split(chunks[1]);
+
+                // 5. O Input Field em si (com bordas próprias)
+                let hidden_pw: String = app.password_input.chars().map(|_| '*').collect();
+                let input_border_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.title };
+                
+                let input_field = Paragraph::new(format!(" {}{}", hidden_pw, "█"))
+                    .block(Block::default().borders(Borders::ALL).style(Style::default().fg(input_border_color)));
+                    
+                f.render_widget(input_field, input_chunks[1]);
+
+                // 6. Mensagem de erro ou ajuda no rodapé do modal
+                let msg_text = if let Some(err) = &app.error_msg { err.as_str() } else { "ENTER: Confirmar | ESC: Cancelar" };
+                let msg_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.guidance };
+                
+                let msg_paragraph = Paragraph::new(msg_text)
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(msg_color));
+                    
+                f.render_widget(msg_paragraph, chunks[2]);
+            }
         })?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 let mut is_g_key = false;
                 
-                // Tratamento de atalhos com CONTROL
                 if key.modifiers.contains(KeyModifiers::CONTROL) { 
                     match key.code { 
-                        KeyCode::Char('d') => app.half_page_down(), 
-                        KeyCode::Char('u') => app.half_page_up(), 
-                        KeyCode::Char('c') => break None, // Retorna None e sai do loop pacificamente
-                        _ => {} 
+                        KeyCode::Char('d') => app.half_page_down(), KeyCode::Char('u') => app.half_page_up(), KeyCode::Char('c') => break None, _ => {} 
                     } 
                     continue; 
                 }
                 
-                // Tratamento de atalhos por modo
                 match app.mode {
+                    AppMode::PasswordInput => match key.code {
+                        KeyCode::Esc => { 
+                            app.mode = AppMode::Normal; app.password_input.clear(); app.error_msg = None; app.selected_db = None; 
+                        }
+                        KeyCode::Enter => {
+                            if let Some(db) = &app.selected_db {
+                                // Testa a senha em segundo plano sem fechar o TUI!
+                                let mut cmd = Command::new("keepassxc-cli");
+                                cmd.args(["ls", "-q", db]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+                                if let Ok(mut child) = cmd.spawn() {
+                                    if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(format!("{}\n", app.password_input).as_bytes()); }
+                                    if child.wait().map(|s| s.success()).unwrap_or(false) {
+                                        break Some((db.clone(), app.password_input.clone()));
+                                    } else {
+                                        app.error_msg = Some("Senha incorreta!".to_string());
+                                        app.password_input.clear();
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Backspace => { app.password_input.pop(); app.error_msg = None; }
+                        KeyCode::Char(c) => { app.password_input.push(c); app.error_msg = None; }
+                        _ => {}
+                    },
                     AppMode::Search => match key.code { 
-                        KeyCode::Esc => app.mode = AppMode::Normal, 
-                        KeyCode::Down => app.next(), 
-                        KeyCode::Up => app.previous(), 
-                        KeyCode::Enter => { 
-                            if let Some(i) = app.list_state.selected() { 
-                                break Some(app.filtered[i].clone()); 
-                            } 
-                        }, 
-                        KeyCode::Backspace => { 
-                            app.search_query.pop(); 
-                            app.apply_filter(); 
-                        } 
-                        KeyCode::Char(c) => { 
-                            app.search_query.push(c); 
-                            app.apply_filter(); 
-                        } 
-                        _ => {} 
+                        KeyCode::Esc => app.mode = AppMode::Normal, KeyCode::Down => app.next(), KeyCode::Up => app.previous(), 
+                        KeyCode::Enter => { if let Some(i) = app.list_state.selected() { app.selected_db = Some(app.filtered[i].clone()); app.mode = AppMode::PasswordInput; } }, 
+                        KeyCode::Backspace => { app.search_query.pop(); app.apply_filter(); } KeyCode::Char(c) => { app.search_query.push(c); app.apply_filter(); } _ => {} 
                     },
                     AppMode::Normal => match key.code { 
-                        KeyCode::Char('q') | KeyCode::Esc => break None, // Retorna None e sai do loop pacificamente
-                        KeyCode::Down | KeyCode::Char('j') => app.next(), 
-                        KeyCode::Up | KeyCode::Char('k') => app.previous(), 
-                        KeyCode::Char('/') | KeyCode::Char('f') => app.mode = AppMode::Search, 
-                        KeyCode::Char('G') => app.go_to_bottom(), 
-                        KeyCode::Char('g') => { 
-                            is_g_key = true; 
-                            if app.last_key_was_g { 
-                                app.go_to_top(); 
-                                is_g_key = false; 
-                            } 
-                        } 
-                        KeyCode::Enter => { 
-                            if let Some(i) = app.list_state.selected() { 
-                                break Some(app.filtered[i].clone()); 
-                            } 
-                        }, 
-                        _ => {} 
+                        KeyCode::Char('q') | KeyCode::Esc => break None, KeyCode::Down | KeyCode::Char('j') => app.next(), KeyCode::Up | KeyCode::Char('k') => app.previous(), KeyCode::Char('/') | KeyCode::Char('f') => app.mode = AppMode::Search, KeyCode::Char('G') => app.go_to_bottom(), 
+                        KeyCode::Char('g') => { is_g_key = true; if app.last_key_was_g { app.go_to_top(); is_g_key = false; } } 
+                        KeyCode::Enter => { if let Some(i) = app.list_state.selected() { app.selected_db = Some(app.filtered[i].clone()); app.mode = AppMode::PasswordInput; } }, _ => {} 
                     },
                     _ => {}
                 }
@@ -606,13 +622,7 @@ fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<String>, B
             }
         }
     };
-    
-    // Limpeza da tela (agora será executada ao sair com q, esc ou ctrl+c)
-    disable_raw_mode()?; 
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?; 
-    terminal.show_cursor()?; 
-    
-    Ok(selected)
+    disable_raw_mode()?; execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?; terminal.show_cursor()?; Ok(selected)
 }
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
@@ -634,6 +644,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                         KeyCode::Backspace => { match app.form_active_field { 0 => { app.form_group.pop(); app.filter_form_groups(); } 1 => { app.form_title.pop(); } 2 => { app.form_username.pop(); } 3 => { app.form_password.pop(); } 4 => { app.form_url.pop(); } _ => {} } },
                         KeyCode::Char(c) => { match app.form_active_field { 0 => { app.form_group.push(c); app.filter_form_groups(); } 1 => { app.form_title.push(c); } 2 => { app.form_username.push(c); } 3 => { app.form_password.push(c); } 4 => { app.form_url.push(c); } _ => {} } }, _ => {}
                     }
+                    AppMode::PasswordInput => {}
                 }
                 app.last_key_was_g = is_g_key;
             }
