@@ -42,7 +42,13 @@ struct RawGeneral {
 
 #[derive(Deserialize, Default)]
 struct RawThemeFile {
+    theme: Option<RawThemeMeta>, // Nova propriedade para o bloco [theme]
     colors: Option<RawThemeColors>,
+}
+
+#[derive(Deserialize)]
+struct RawThemeMeta {
+    name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -118,8 +124,8 @@ fn setup_and_load_config() -> (AppConfig, Theme) {
     let config_path = config_dir.join("config.toml");
     if let Ok(content) = fs::read_to_string(&config_path) {
         if let Ok(raw) = toml::from_str::<RawConfig>(&content) {
-            if let Some(general_config) = raw.general { // Alterado aqui
-                if let Some(p) = general_config.path {  // Alterado aqui
+            if let Some(general_config) = raw.general {
+                if let Some(p) = general_config.path { 
                     config.search_path = if p.starts_with("~/") { 
                         p.replacen("~/", &format!("{}/", home), 1) 
                     } else { p };
@@ -132,18 +138,33 @@ fn setup_and_load_config() -> (AppConfig, Theme) {
 
     let mut theme = Theme::default();
     if config.theme_name != "default" {
-        let theme_path = themes_dir.join(format!("{}.toml", config.theme_name));
-        if let Ok(content) = fs::read_to_string(&theme_path) {
-            if let Ok(raw_theme) = toml::from_str::<RawThemeFile>(&content) {
-                if let Some(colors) = raw_theme.colors {
-                    if let Some(c) = colors.alert_info.and_then(|h| hex_to_color(&h)) { theme.alert_info = c; }
-                    if let Some(c) = colors.alert_warn.and_then(|h| hex_to_color(&h)) { theme.alert_warn = c; }
-                    if let Some(c) = colors.alert_error.and_then(|h| hex_to_color(&h)) { theme.alert_error = c; }
-                    if let Some(c) = colors.annotation.and_then(|h| hex_to_color(&h)) { theme.annotation = c; }
-                    if let Some(c) = colors.base.and_then(|h| hex_to_color(&h)) { theme.base = c; }
-                    if let Some(c) = colors.guidance.and_then(|h| hex_to_color(&h)) { theme.guidance = c; }
-                    if let Some(c) = colors.important.and_then(|h| hex_to_color(&h)) { theme.important = c; }
-                    if let Some(c) = colors.title.and_then(|h| hex_to_color(&h)) { theme.title = c; }
+        // Varrer a pasta de temas
+        if let Ok(entries) = fs::read_dir(&themes_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                // Apenas processar arquivos .toml
+                if path.extension().map_or(false, |ext| ext == "toml") {
+                    if let Ok(content) = fs::read_to_string(&path) {
+                        if let Ok(raw_theme) = toml::from_str::<RawThemeFile>(&content) {
+                            // Verifica se o arquivo tem o bloco [theme] e se o "name" bate com a config
+                            if let Some(theme_meta) = raw_theme.theme {
+                                if theme_meta.name.as_deref() == Some(config.theme_name.as_str()) {
+                                    // Tema encontrado! Mapeia as cores e sai do loop
+                                    if let Some(colors) = raw_theme.colors {
+                                        if let Some(c) = colors.alert_info.and_then(|h| hex_to_color(&h)) { theme.alert_info = c; }
+                                        if let Some(c) = colors.alert_warn.and_then(|h| hex_to_color(&h)) { theme.alert_warn = c; }
+                                        if let Some(c) = colors.alert_error.and_then(|h| hex_to_color(&h)) { theme.alert_error = c; }
+                                        if let Some(c) = colors.annotation.and_then(|h| hex_to_color(&h)) { theme.annotation = c; }
+                                        if let Some(c) = colors.base.and_then(|h| hex_to_color(&h)) { theme.base = c; }
+                                        if let Some(c) = colors.guidance.and_then(|h| hex_to_color(&h)) { theme.guidance = c; }
+                                        if let Some(c) = colors.important.and_then(|h| hex_to_color(&h)) { theme.important = c; }
+                                        if let Some(c) = colors.title.and_then(|h| hex_to_color(&h)) { theme.title = c; }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
