@@ -25,7 +25,7 @@ enum AppMode {
     Search,
     Normal,
     ConfirmDelete,
-    Form, // Novo Modo Único para Adição e Edição
+    Form,
 }
 
 // ==========================================
@@ -133,8 +133,16 @@ impl DbApp {
 
     fn apply_filter(&mut self) {
         let q = self.search_query.to_lowercase();
-        if q.is_empty() { self.filtered = self.entries.clone(); } 
-        else { self.filtered = self.entries.iter().filter(|e| e.to_lowercase().contains(&q)).cloned().collect(); }
+        let terms: Vec<&str> = q.split_whitespace().collect(); // Split by spaces for FZF multi-term behavior
+        
+        if terms.is_empty() { 
+            self.filtered = self.entries.clone(); 
+        } else { 
+            self.filtered = self.entries.iter().filter(|e| {
+                let lower = e.to_lowercase();
+                terms.iter().all(|t| lower.contains(t)) // Checks if ALL terms are present
+            }).cloned().collect(); 
+        }
         self.list_state.select(if self.filtered.is_empty() { None } else { Some(0) });
     }
 
@@ -195,12 +203,13 @@ struct App {
     
     form_is_edit: bool,
     form_original_path: String,
-    form_active_field: usize, // 0: Grupo, 1: Titulo, 2: User, 3: Pass
+    form_active_field: usize, // 0: Grupo, 1: Titulo, 2: User, 3: Pass, 4: URL
     
     form_group: String,
     form_title: String,
     form_username: String,
     form_password: String,
+    form_url: String,
 }
 
 impl App {
@@ -212,7 +221,8 @@ impl App {
             
             all_groups: vec![], filtered_groups: vec![], form_group_state: ListState::default(),
             form_is_edit: false, form_original_path: String::new(), form_active_field: 0,
-            form_group: String::new(), form_title: String::new(), form_username: String::new(), form_password: String::new(),
+            form_group: String::new(), form_title: String::new(), form_username: String::new(), 
+            form_password: String::new(), form_url: String::new(),
         };
         app.refresh_entries();
         app
@@ -245,15 +255,24 @@ impl App {
 
     fn apply_filter(&mut self) {
         let q = self.search_query.to_lowercase();
-        if q.is_empty() { self.filtered = self.entries.clone(); } 
-        else { self.filtered = self.entries.iter().filter(|e| e.to_lowercase().contains(&q)).cloned().collect(); }
+        let terms: Vec<&str> = q.split_whitespace().collect();
+        
+        if terms.is_empty() { 
+            self.filtered = self.entries.clone(); 
+        } else { 
+            self.filtered = self.entries.iter().filter(|e| {
+                let lower = e.to_lowercase();
+                terms.iter().all(|t| lower.contains(t))
+            }).cloned().collect(); 
+        }
         self.list_state.select(if self.filtered.is_empty() { None } else { Some(0) });
     }
 
     // --- MÉTODOS DO FORMULÁRIO ---
     fn open_add_form(&mut self) {
         self.form_is_edit = false;
-        self.form_group.clear(); self.form_title.clear(); self.form_username.clear(); self.form_password.clear();
+        self.form_group.clear(); self.form_title.clear(); self.form_username.clear(); 
+        self.form_password.clear(); self.form_url.clear();
         self.form_active_field = 0;
         self.mode = AppMode::Form;
         self.filter_form_groups();
@@ -263,7 +282,6 @@ impl App {
         self.form_is_edit = true;
         self.form_original_path = entry.clone();
         
-        // Separa Grupo e Titulo visualmente para o modal
         if let Some(idx) = entry.rfind('/') {
             self.form_group = entry[..idx].to_string();
             self.form_title = entry[idx+1..].to_string();
@@ -274,8 +292,9 @@ impl App {
 
         self.form_username = self.fetch_field(&entry, "UserName");
         self.form_password = self.fetch_field(&entry, "Password");
+        self.form_url = self.fetch_field(&entry, "URL");
 
-        self.form_active_field = 3; // Foca na senha, que é o que geralmente se edita
+        self.form_active_field = 3; // Foca na senha por padrão na edição
         self.mode = AppMode::Form;
         self.filter_form_groups();
     }
@@ -321,7 +340,6 @@ impl App {
         }
 
         if self.form_is_edit {
-            // Se o caminho (Grupo/Titulo) mudou, precisamos usar o comando 'mv'
             if path != self.form_original_path {
                 let mut cmd_mv = Command::new("keepassxc-cli");
                 cmd_mv.args(["mv", "-q", &self.db_path, &self.form_original_path, &path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
@@ -331,18 +349,16 @@ impl App {
                 }
             }
 
-            // Atualiza Usuario e Senha
             let mut cmd_edit = Command::new("keepassxc-cli");
-            cmd_edit.args(["edit", "-q", "-p", "-u", &self.form_username, &self.db_path, &path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+            cmd_edit.args(["edit", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, &self.db_path, &path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
             if let Ok(mut child) = cmd_edit.spawn() {
                 if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(format!("{}\n{}\n{}\n", self.password, self.form_password, self.form_password).as_bytes()); }
                 if child.wait().map(|s| s.success()).unwrap_or(false) { self.set_msg("Entrada editada com sucesso!", false); } 
                 else { self.set_msg("Erro ao editar.", true); }
             }
         } else {
-            // Adição Padrão
             let mut cmd_add = Command::new("keepassxc-cli");
-            cmd_add.args(["add", "-q", "-p", "-u", &self.form_username, &self.db_path, &path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+            cmd_add.args(["add", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, &self.db_path, &path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
             if let Ok(mut child) = cmd_add.spawn() {
                 if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(format!("{}\n{}\n{}\n", self.password, self.form_password, self.form_password).as_bytes()); }
                 if child.wait().map(|s| s.success()).unwrap_or(false) {
@@ -398,7 +414,7 @@ impl App {
                     if let Ok(mut copy_child) = Command::new(cmd_name).stdin(Stdio::piped()).spawn() {
                         if let Some(mut stdin) = copy_child.stdin.take() { let _ = stdin.write_all(entry_pass.as_bytes()); }
                         if copy_child.wait().is_ok() {
-                            self.set_msg(&format!("Copiado: {}", entry), false);
+                            self.set_msg(&format!("Copiado: {}\n(Limpo do clipboard em 10s)", entry), false);
                             spawn_clipboard_clearer(entry_pass, self.is_mac);
                             return;
                         }
@@ -514,7 +530,18 @@ fn run_selection_tui(dbs: Vec<String>) -> Result<String, Box<dyn std::error::Err
             let list = List::new(items).block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
             f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
-            f.render_widget(Paragraph::new("ENTER: Selecionar | ESC/q: Cancelar").block(Block::default().borders(Borders::ALL)).alignment(Alignment::Center), chunks[2]);
+            let footer_text = if app.mode == AppMode::Search {
+                "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+C: Sair"
+            } else {
+                "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | ESC/q: Sair"
+            };
+            
+            f.render_widget(
+                Paragraph::new(footer_text)
+                    .block(Block::default().borders(Borders::ALL))
+                    .alignment(Alignment::Center), 
+                chunks[2]
+            );
         })?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -610,22 +637,23 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                         _ => {}
                     },
                     AppMode::ConfirmDelete => match key.code {
-                        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => { app.delete_selected(); app.mode = AppMode::Normal; }
-                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => app.mode = AppMode::Normal,
+                        // Correção 1: Enter agora não exclui, age como o 'N' (Cancelar)
+                        KeyCode::Char('y') | KeyCode::Char('Y') => { app.delete_selected(); app.mode = AppMode::Normal; }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Enter | KeyCode::Esc => app.mode = AppMode::Normal,
                         _ => {}
                     },
                     AppMode::Form => match key.code {
                         KeyCode::Esc => app.mode = AppMode::Normal,
-                        KeyCode::BackTab => { app.form_active_field = if app.form_active_field == 0 { 3 } else { app.form_active_field - 1 }; }
-                        KeyCode::Tab => { app.form_active_field = (app.form_active_field + 1) % 4; }
+                        KeyCode::BackTab => { app.form_active_field = if app.form_active_field == 0 { 4 } else { app.form_active_field - 1 }; }
+                        KeyCode::Tab => { app.form_active_field = (app.form_active_field + 1) % 5; } // Alterado para % 5
                         KeyCode::Down => { if app.form_active_field == 0 { app.form_next_group(); } }
                         KeyCode::Up => { if app.form_active_field == 0 { app.form_prev_group(); } }
                         KeyCode::Enter => {
                             if app.form_active_field == 0 && app.form_group_state.selected().is_some() {
                                 app.form_group = app.filtered_groups[app.form_group_state.selected().unwrap()].clone();
-                                app.form_active_field = 1; // Pula para Titulo apos preencher grupo
+                                app.form_active_field = 1;
                             } else {
-                                app.submit_form(); // Enter em qualquer outro campo salva tudo
+                                app.submit_form();
                             }
                         },
                         KeyCode::Backspace => {
@@ -634,6 +662,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                                 1 => { app.form_title.pop(); }
                                 2 => { app.form_username.pop(); }
                                 3 => { app.form_password.pop(); }
+                                4 => { app.form_url.pop(); } // Campo Novo
                                 _ => {}
                             }
                         },
@@ -643,6 +672,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                                 1 => { app.form_title.push(c); }
                                 2 => { app.form_username.push(c); }
                                 3 => { app.form_password.push(c); }
+                                4 => { app.form_url.push(c); } // Campo Novo
                                 _ => {}
                             }
                         },
@@ -668,36 +698,45 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
     let list = List::new(items).block(Block::default().title(list_title).borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
-    f.render_widget(Paragraph::new("gg/G: Topo/Fim | CTRL-U/D: Meia Pág | ENTER: Copiar | CTRL-A/E/X: Ações").block(Block::default().borders(Borders::ALL)).alignment(Alignment::Center), chunks[2]);
+    let footer_text = if app.mode == AppMode::Search {
+        "CTRL-U/D: Meia Pág | ENTER: Copiar | CTRL-A/E/X: Ações | CTRL+C: Sair"
+    } else if app.mode == AppMode::Normal {
+        "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | ENTER: Copiar | CTRL-A/E/X: Ações | ESC/q: Sair"
+    } else {
+        ""
+    };
+    
+    f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL)).alignment(Alignment::Center), chunks[2]);
 
     if app.mode == AppMode::ConfirmDelete {
-        let area = centered_rect(50, 15, f.size());
-        f.render_widget(Clear, area);
-        f.render_widget(Paragraph::new(format!("Deseja EXCLUIR '{}'? [y/N]", app.get_selected().unwrap_or_default())).block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(Color::Red))).alignment(Alignment::Center), area);
-    } 
-    else if app.mode == AppMode::Form {
-        let area = centered_rect(70, 75, f.size());
+        // Redimensionando a caixa para tamanho fixo: 60 colunas por 5 linhas
+        let area = centered_fixed_rect(60, 5, f.size());
         f.render_widget(Clear, area);
         
-        let form_block = Block::default()
-            .title(if app.form_is_edit { " Editar Entrada " } else { " Nova Entrada " })
-            .borders(Borders::ALL)
-            .style(Style::default().fg(Color::Green));
+        let text = format!("\nDeseja EXCLUIR '{}'? [y/N]", app.get_selected().unwrap_or_default());
+        f.render_widget(Paragraph::new(text).block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(Color::Red))).alignment(Alignment::Center), area);
+    } 
+    else if app.mode == AppMode::Form {
+        // Altura do Modal foi aumentada levemente (de 75 para 80) para acomodar a URL
+        let area = centered_rect(70, 80, f.size());
+        f.render_widget(Clear, area);
+        
+        let form_block = Block::default().title(if app.form_is_edit { " Editar Entrada " } else { " Nova Entrada " }).borders(Borders::ALL).style(Style::default().fg(Color::Green));
         f.render_widget(form_block.clone(), area);
         
         let inner_area = form_block.inner(area);
+        let show_dropdown = app.form_active_field == 0 && !app.filtered_groups.is_empty();
         
-        // Layout: Grupo + Lista(Dropdown) (0 e 1), Título(2), Usuario(3), Senha(4)
-        let form_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Input Grupo
-                Constraint::Length(if app.form_active_field == 0 && !app.filtered_groups.is_empty() { 6 } else { 0 }),
-                Constraint::Length(3), // Titulo
-                Constraint::Length(3), // Usuario
-                Constraint::Length(3), // Senha
-                Constraint::Min(1),    // Help
-            ]).split(inner_area);
+        // Layout atualizado com o campo URL no índice 5
+        let form_chunks = Layout::default().direction(Direction::Vertical).constraints([
+            Constraint::Length(3), // Grupo
+            Constraint::Length(if show_dropdown { 5 } else { 0 }), // Lista flutuante do Grupo
+            Constraint::Length(3), // Titulo
+            Constraint::Length(3), // Usuario
+            Constraint::Length(3), // Senha
+            Constraint::Length(3), // URL
+            Constraint::Min(1),    // Help
+        ]).split(inner_area);
 
         // --- BLOCO DO GRUPO (CONTÊINER ÚNICO) ---
         let group_rect = form_chunks[0].union(form_chunks[1]); 
@@ -705,26 +744,17 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
             .title(" Grupo ")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(if app.form_active_field == 0 { Color::Yellow } else { Color::White }));
-        
         f.render_widget(group_block, group_rect);
 
-        // Renderiza o input do grupo logo abaixo do título
         let input_rect = Rect::new(group_rect.x + 1, group_rect.y + 1, group_rect.width - 2, 1);
         f.render_widget(Paragraph::new(format!(" {}{}", app.form_group, if app.form_active_field == 0 { "█" } else { "" })), input_rect);
 
-        // Renderiza a lista COM UMA LINHA DIVISÓRIA
-        if app.form_active_field == 0 && !app.filtered_groups.is_empty() {
+        if show_dropdown {
             let items: Vec<ListItem> = app.filtered_groups.iter().map(|g| ListItem::new(g.as_str())).collect();
-            
-            // Sincroniza a cor da divisória com a cor da borda do painel
             let divider_color = if app.form_active_field == 0 { Color::Yellow } else { Color::White };
-            
             let list = List::new(items)
-                .block(Block::default()
-                    .borders(Borders::TOP) 
-                    .border_style(Style::default().fg(divider_color))) // <-- Corrigido aqui
-                .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-                .highlight_symbol("> ");
+                .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(divider_color)))
+                .highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol("> ");
             
             let list_rect = Rect::new(group_rect.x + 1, group_rect.y + 2, group_rect.width - 2, group_rect.height - 3);
             f.render_stateful_widget(list, list_rect, &mut app.form_group_state);
@@ -746,19 +776,46 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
         f.render_widget(Paragraph::new(format!(" {}{}", hidden, if app.form_active_field == 3 { "█" } else { "" }))
             .block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[4]);
 
-        f.render_widget(Paragraph::new("TAB: Navegar | ENTER: Confirmar | SETAS: Lista").alignment(Alignment::Center).style(Style::default().fg(Color::DarkGray)), form_chunks[5]);
+        // URL
+        let url_color = if app.form_active_field == 4 { Color::Yellow } else { Color::White };
+        f.render_widget(Paragraph::new(format!(" {}{}", app.form_url, if app.form_active_field == 4 { "█" } else { "" }))
+            .block(Block::default().title(" URL ").borders(Borders::ALL).style(Style::default().fg(url_color))), form_chunks[5]);
+
+        f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(Color::DarkGray)), form_chunks[6]);
     }
 
     if let Some((msg, time, is_error)) = &app.message {
-        if time.elapsed() < Duration::from_secs(2) {
-            let area = centered_rect(40, 10, f.size());
+        // Aumentei o tempo de 2 para 3 segundos para dar tempo de ler o aviso de 10s
+        if time.elapsed() < Duration::from_secs(3) {
+            // Usando a mesma função de tamanho fixo da exclusão (50x5)
+            let area = centered_fixed_rect(50, 5, f.size());
             f.render_widget(Clear, area);
-            f.render_widget(Paragraph::new(msg.as_str()).block(Block::default().borders(Borders::ALL).style(Style::default().fg(if *is_error { Color::Red } else { Color::Green }))).alignment(Alignment::Center), area);
-        } else { app.message = None; }
+            
+            // O \n no início empurra as duas linhas de texto exatamente para o meio vertical da caixa
+            let text = format!("\n{}", msg);
+            let title = if *is_error { " Erro " } else { " Sucesso " };
+            
+            f.render_widget(
+                Paragraph::new(text)
+                    .block(Block::default().title(title).borders(Borders::ALL).style(Style::default().fg(if *is_error { Color::Red } else { Color::Green })))
+                    .alignment(Alignment::Center), 
+                area
+            );
+        } else { 
+            app.message = None; 
+        }
     }
 }
 
+// Retângulo baseado em porcentagem (para o formulário principal)
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default().direction(Direction::Vertical).constraints([Constraint::Percentage((100 - percent_y) / 2), Constraint::Percentage(percent_y), Constraint::Percentage((100 - percent_y) / 2)]).split(r);
     Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage((100 - percent_x) / 2), Constraint::Percentage(percent_x), Constraint::Percentage((100 - percent_x) / 2)]).split(popup_layout[1])[1]
+}
+
+// Retângulo de tamanho fixo em colunas/linhas (para caixas de confirmação)
+fn centered_fixed_rect(width: u16, height: u16, r: Rect) -> Rect {
+    let col = r.width.saturating_sub(width) / 2;
+    let row = r.height.saturating_sub(height) / 2;
+    Rect::new(col, row, width.min(r.width), height.min(r.height))
 }
