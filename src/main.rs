@@ -22,7 +22,7 @@ use std::{
 };
 
 #[derive(PartialEq, Clone, Copy)]
-enum AppMode { Search, Normal, ConfirmDelete, Form, PasswordInput }
+enum AppMode { Search, Normal, ConfirmDelete, Form, PasswordInput, ConfirmCreateDb, CreateDb }
 
 // ==========================================
 // SISTEMA DE CONFIGURAÇÃO E TEMAS (TOML)
@@ -256,15 +256,18 @@ struct DbApp {
     list_state: ListState, mode: AppMode, last_key_was_g: bool, list_height: usize,
     theme: Theme,
     password_input: String, selected_db: Option<String>, error_msg: Option<String>,
+    new_db_name: String, new_db_password: String, create_db_active_field: usize,
 }
 
 impl DbApp {
     fn new(dbs: Vec<String>, theme: Theme) -> Self {
+        let mode = if dbs.is_empty() { AppMode::ConfirmCreateDb } else { AppMode::Search };
         let mut app = Self { 
             entries: dbs.clone(), filtered: dbs, search_query: String::new(), 
-            list_state: ListState::default(), mode: AppMode::Search, last_key_was_g: false, 
+            list_state: ListState::default(), mode, last_key_was_g: false, 
             list_height: 10, theme,
-            password_input: String::new(), selected_db: None, error_msg: None
+            password_input: String::new(), selected_db: None, error_msg: None,
+            new_db_name: String::new(), new_db_password: String::new(), create_db_active_field: 0,
         };
         if !app.filtered.is_empty() { app.list_state.select(Some(0)); }
         
@@ -333,10 +336,24 @@ impl App {
             if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(format!("{}\n", self.password).as_bytes()); }
             if let Ok(output) = child.wait_with_output() {
                 self.entries.clear(); self.all_groups.clear();
-                for line in String::from_utf8_lossy(&output.stdout).lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-                    if line.ends_with('/') { self.all_groups.push(line.trim_end_matches('/').to_string()); } 
-                    else { self.entries.push(line.to_string()); }
+                let lines: Vec<String> = String::from_utf8_lossy(&output.stdout).lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                
+                let mut groups = Vec::new();
+                let mut entries = Vec::new();
+                for line in &lines {
+                    if line.ends_with('/') { groups.push(line.trim_end_matches('/').to_string()); } 
+                    else { entries.push(line.clone()); }
                 }
+                self.all_groups = groups.clone();
+
+                // Identifica grupos vazios
+                for g in &groups {
+                    let g_prefix = format!("{}/", g);
+                    let is_empty = !lines.iter().any(|l| l.starts_with(&g_prefix) && l != &g_prefix);
+                    if is_empty { entries.push(format!("{}/[vazio]", g)); }
+                }
+
+                self.entries = entries;
                 self.history.sort_items(&mut self.entries);
             }
         }
@@ -391,12 +408,29 @@ impl App {
     fn form_prev_group(&mut self) { if self.filtered_groups.is_empty() { return; } let i = match self.form_group_state.selected() { Some(i) => if i == 0 { self.filtered_groups.len() - 1 } else { i - 1 }, None => 0 }; self.form_group_state.select(Some(i)); }
 
     fn submit_form(&mut self) {
-        let path = if self.form_group.trim().is_empty() { self.form_title.trim().to_string() } else { format!("{}/{}", self.form_group.trim().trim_end_matches('/'), self.form_title.trim()) };
-        if path.is_empty() { self.set_msg("O Título não pode ser vazio!", true); return; }
+        let group = self.form_group.trim().trim_end_matches('/').to_string();
+        let title = self.form_title.trim().to_string();
+        let path = if group.is_empty() { title.clone() } else { format!("{}/{}", group, title) };
+        
+        if title.is_empty() { self.set_msg("O Título não pode ser vazio!", true); return; }
+
+        // Tenta criar o grupo primeiro (mkdir no keepassxc-cli não falha se o grupo já existir, ou podemos ignorar o erro)
+        if !group.is_empty() {
+            let mut cmd_mkdir = Command::new("keepassxc-cli");
+            cmd_mkdir.args(["mkdir", "-q", &self.db_path, &group]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+            if let Ok(mut child) = cmd_mkdir.spawn() {
+                if let Some(mut s) = child.stdin.take() { let _ = s.write_all(format!("{}\n", self.password).as_bytes()); }
+                let _ = child.wait();
+            }
+        }
 
         if self.form_is_edit {
             if path != self.form_original_path {
-                let mut cmd_mv = Command::new("keepassxc-cli"); cmd_mv.args(["mv", "-q", &self.db_path, &self.form_original_path, &path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+                let mut cmd_mv = Command::new("keepassxc-cli"); 
+                // O comando 'mv' do keepassxc-cli espera [database] [origem] [grupo_destino]
+                // Se o destino for a raiz, o grupo_destino deve ser "/"
+                let dest_group = if group.is_empty() { "/" } else { &group };
+                cmd_mv.args(["mv", "-q", &self.db_path, &self.form_original_path, dest_group]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
                 if let Ok(mut child) = cmd_mv.spawn() { if let Some(mut s) = child.stdin.take() { let _ = s.write_all(format!("{}\n", self.password).as_bytes()); } let _ = child.wait(); }
             }
             let mut cmd_edit = Command::new("keepassxc-cli"); cmd_edit.args(["edit", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, &self.db_path, &path]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
@@ -425,6 +459,10 @@ impl App {
 
     fn copy_password(&mut self) {
         if let Some(entry) = self.get_selected() {
+            if entry.ends_with("/[vazio]") {
+                self.set_msg("Isso é um grupo vazio!", true);
+                return;
+            }
             self.history.record_use(&entry);
             let mut cmd = Command::new("keepassxc-cli"); cmd.args(["show", "-q", &self.db_path, &entry, "-a", "Password"]).stdin(Stdio::piped()).stdout(Stdio::piped());
             if let Ok(mut child) = cmd.spawn() {
@@ -447,11 +485,26 @@ impl App {
     
     fn delete_selected(&mut self) {
         if let Some(entry) = self.get_selected() {
-            let mut cmd = Command::new("keepassxc-cli"); cmd.args(["rm", "-q", &self.db_path, &entry]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+            let is_empty_group = entry.ends_with("/[vazio]");
+            let (cmd_name, path_to_del) = if is_empty_group {
+                ("rmdir", entry.trim_end_matches("/[vazio]").to_string())
+            } else {
+                ("rm", entry)
+            };
+
+            let mut cmd = Command::new("keepassxc-cli"); 
+            cmd.args([cmd_name, "-q", &self.db_path, &path_to_del]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
             if let Ok(mut child) = cmd.spawn() {
                 if let Some(mut s) = child.stdin.take() { let _ = s.write_all(format!("{}\n", self.password).as_bytes()); }
-                if child.wait().map(|s| s.success()).unwrap_or(false) { self.set_msg("Entrada excluída!", false); self.refresh_entries(); self.previous(); } 
-                else { self.set_msg("Erro ao excluir.", true); }
+                let output = child.wait_with_output().unwrap();
+                if output.status.success() { 
+                    self.set_msg(if is_empty_group { "Grupo excluído!" } else { "Entrada excluída!" }, false); 
+                    self.refresh_entries(); 
+                    self.previous(); 
+                } else { 
+                    let err = String::from_utf8_lossy(&output.stderr).to_string();
+                    self.set_msg(&format!("Erro ao excluir: {}", err), true); 
+                }
             }
         }
     }
@@ -470,7 +523,58 @@ fn spawn_clipboard_clearer(password: String, is_mac: bool) {
     });
 }
 
+fn create_database(name: &str, password: &str) -> Result<PathBuf, String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let db_dir = PathBuf::from(format!("{}/.config/fpass/databases", home));
+    if let Err(e) = fs::create_dir_all(&db_dir) {
+        return Err(format!("Erro ao criar diretório: {}", e));
+    }
+    let db_path = db_dir.join(format!("{}.kdbx", name));
+    if db_path.exists() {
+        return Err("Arquivo já existe!".to_string());
+    }
+
+    let mut cmd = Command::new("keepassxc-cli");
+    cmd.args(["db-create", "-p", db_path.to_str().unwrap()]);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+
+    match cmd.spawn() {
+        Ok(mut child) => {
+            if let Some(mut stdin) = child.stdin.take() {
+                let _ = stdin.write_all(format!("{}\n{}\n", password, password).as_bytes());
+            }
+            let output = child.wait_with_output().map_err(|e| e.to_string())?;
+            if output.status.success() {
+                Ok(db_path)
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).to_string())
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "-v" | "--version" => {
+                println!("fpass versão {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "-h" | "--help" => {
+                println!("fpass - Gerenciador de senhas TUI para KeePassXC");
+                println!("\nUso:");
+                println!("  fpass [opções]");
+                println!("\nOpções:");
+                println!("  -v, --version    Exibe a versão do programa");
+                println!("  -h, --help       Exibe esta mensagem de ajuda");
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     // Verifica se o sistema é macOS
     let is_mac = std::env::consts::OS == "macos";
 
@@ -488,14 +592,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     history.sort_items(&mut dbs);
 
     // Agora recebemos a DB e a Senha prontas e validadas!
-    let (db_path, password) = if dbs.is_empty() { 
-        println!("Nenhum arquivo .kdbx encontrado."); 
-        std::process::exit(1); 
-    } else { 
-        match run_selection_tui(dbs, theme.clone())? {
-            Some(res) => res,
-            None => std::process::exit(0),
-        }
+    let (db_path, password) = match run_selection_tui(dbs, theme.clone())? {
+        Some(res) => res,
+        None => std::process::exit(0),
     };
 
     history.record_use(&db_path);
@@ -511,9 +610,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn find_databases(path: &str) -> Vec<String> {
+    let mut dbs = Vec::new();
+    
+    // Busca no diretório configurado (sem arquivos ocultos para performance)
     if let Ok(output) = Command::new("fd").args([".kdbx$", path]).output() {
-        return String::from_utf8_lossy(&output.stdout).lines().map(|s| s.trim()).filter(|s| !s.is_empty()).map(String::from).collect();
-    } vec![]
+        dbs.extend(String::from_utf8_lossy(&output.stdout).lines().map(|s| s.trim()).filter(|s| !s.is_empty()).map(String::from));
+    }
+
+    // Busca especificamente no diretório do fpass (que é oculto)
+    let home = std::env::var("HOME").unwrap_or_default();
+    let fpass_db_dir = format!("{}/.config/fpass/databases", home);
+    if let Ok(output) = Command::new("fd").args([".kdbx$", &fpass_db_dir]).output() {
+        dbs.extend(String::from_utf8_lossy(&output.stdout).lines().map(|s| s.trim()).filter(|s| !s.is_empty()).map(String::from));
+    }
+
+    // Remove duplicatas caso o path configurado seja o mesmo do fpass
+    dbs.sort();
+    dbs.dedup();
+    dbs
 }
 
 fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(String, String)>, Box<dyn std::error::Error>> {
@@ -534,7 +648,13 @@ fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(String, S
             let list = List::new(items).block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
             f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
-            let footer_text = if app.mode == AppMode::Search { "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+C: Sair" } else { "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | ESC/q: Sair" };
+            let footer_text = match app.mode {
+                AppMode::Search => "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+A: Novo | CTRL+C: Sair",
+                AppMode::ConfirmCreateDb => "y: Sim | n/N: Não | CTRL+C: Sair",
+                AppMode::CreateDb => "TAB: Navegar | ENTER: Criar | ESC: Cancelar | CTRL+C: Sair",
+                AppMode::PasswordInput => "ENTER: Confirmar | ESC: Cancelar | CTRL+C: Sair",
+                _ => "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | CTRL+A: Novo | ESC/q: Sair",
+            };
             f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
 
             // DESENHA O MODAL DE SENHA SOBRE A TELA
@@ -589,6 +709,48 @@ fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(String, S
                     
                 f.render_widget(msg_paragraph, chunks[2]);
             }
+
+            if app.mode == AppMode::ConfirmCreateDb {
+                let area = centered_fixed_rect(60, 5, f.size());
+                f.render_widget(Clear, area);
+                f.render_widget(Paragraph::new("\nNenhum arquivo .kdbx encontrado.\nDeseja criar um banco de dados? [y/N]").block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_warn))).alignment(Alignment::Center), area);
+            }
+
+            if app.mode == AppMode::CreateDb {
+                let modal_area = centered_fixed_rect(50, 10, f.size());
+                f.render_widget(Clear, modal_area);
+                
+                let modal_block = Block::default().title(" Criar Novo Banco de Dados ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+                f.render_widget(modal_block.clone(), modal_area);
+
+                let inner_area = modal_block.inner(modal_area);
+                let chunks = Layout::default().direction(Direction::Vertical).constraints([
+                    Constraint::Length(3), // Nome
+                    Constraint::Length(3), // Senha
+                    Constraint::Min(1),    // Footer/Erro
+                ]).split(inner_area);
+
+                // Campo Nome
+                let name_color = if app.create_db_active_field == 0 { app.theme.annotation } else { app.theme.base };
+                let name_field = Paragraph::new(format!(" {}{}", app.new_db_name, if app.create_db_active_field == 0 { "█" } else { "" }))
+                    .block(Block::default().title(" Nome do Arquivo ").borders(Borders::ALL).style(Style::default().fg(name_color)));
+                f.render_widget(name_field, chunks[0]);
+
+                // Campo Senha
+                let pass_color = if app.create_db_active_field == 1 { app.theme.annotation } else { app.theme.base };
+                let hidden_pw: String = app.new_db_password.chars().map(|_| '*').collect();
+                let pass_field = Paragraph::new(format!(" {}{}", hidden_pw, if app.create_db_active_field == 1 { "█" } else { "" }))
+                    .block(Block::default().title(" Senha do Banco ").borders(Borders::ALL).style(Style::default().fg(pass_color)));
+                f.render_widget(pass_field, chunks[1]);
+
+                // Footer ou Erro
+                let (footer_text, footer_color) = if let Some(err) = &app.error_msg {
+                    (err.as_str(), app.theme.alert_error)
+                } else {
+                    ("TAB: Navegar | ENTER: Criar | ESC: Cancelar", app.theme.guidance)
+                };
+                f.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center).style(Style::default().fg(footer_color)), chunks[2]);
+            }
         })?;
 
         if event::poll(Duration::from_millis(100))? {
@@ -597,12 +759,63 @@ fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(String, S
                 
                 if key.modifiers.contains(KeyModifiers::CONTROL) { 
                     match key.code { 
-                        KeyCode::Char('d') => app.half_page_down(), KeyCode::Char('u') => app.half_page_up(), KeyCode::Char('c') => break None, _ => {} 
+                        KeyCode::Char('d') => app.half_page_down(), KeyCode::Char('u') => app.half_page_up(), KeyCode::Char('c') => break None,
+                        KeyCode::Char('a') => { 
+                            if app.mode == AppMode::Normal || app.mode == AppMode::Search { 
+                                app.new_db_name.clear();
+                                app.new_db_password.clear();
+                                app.create_db_active_field = 0;
+                                app.mode = AppMode::CreateDb; 
+                            } 
+                        }
+                        _ => {} 
                     } 
                     continue; 
                 }
                 
                 match app.mode {
+                    AppMode::ConfirmCreateDb => match key.code {
+                        KeyCode::Char('y') | KeyCode::Char('Y') => { app.mode = AppMode::CreateDb; app.create_db_active_field = 0; }
+                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => break None,
+                        _ => {}
+                    },
+                    AppMode::CreateDb => match key.code {
+                        KeyCode::Esc => app.mode = if app.entries.is_empty() { AppMode::ConfirmCreateDb } else { AppMode::Normal },
+                        KeyCode::Tab | KeyCode::BackTab => { app.create_db_active_field = (app.create_db_active_field + 1) % 2; }
+                        KeyCode::Enter => {
+                            if app.create_db_active_field == 0 && !app.new_db_name.is_empty() {
+                                app.create_db_active_field = 1;
+                            } else if !app.new_db_name.is_empty() {
+                                match create_database(&app.new_db_name, &app.new_db_password) {
+                                    Ok(path) => {
+                                        let path_str = path.to_string_lossy().to_string();
+                                        break Some((path_str, app.new_db_password.clone()));
+                                    }
+                                    Err(e) => {
+                                        app.error_msg = Some(e);
+                                        app.create_db_active_field = 0;
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Backspace => {
+                            app.error_msg = None;
+                            match app.create_db_active_field {
+                                0 => { app.new_db_name.pop(); }
+                                1 => { app.new_db_password.pop(); }
+                                _ => {}
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            app.error_msg = None;
+                            match app.create_db_active_field {
+                                0 => { app.new_db_name.push(c); }
+                                1 => { app.new_db_password.push(c); }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    },
                     AppMode::PasswordInput => match key.code {
                         KeyCode::Esc => { 
                             app.mode = AppMode::Normal; app.password_input.clear(); app.error_msg = None; app.selected_db = None; 
@@ -665,7 +878,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                         KeyCode::Backspace => { match app.form_active_field { 0 => { app.form_group.pop(); app.filter_form_groups(); } 1 => { app.form_title.pop(); } 2 => { app.form_username.pop(); } 3 => { app.form_password.pop(); } 4 => { app.form_url.pop(); } _ => {} } },
                         KeyCode::Char(c) => { match app.form_active_field { 0 => { app.form_group.push(c); app.filter_form_groups(); } 1 => { app.form_title.push(c); } 2 => { app.form_username.push(c); } 3 => { app.form_password.push(c); } 4 => { app.form_url.push(c); } _ => {} } }, _ => {}
                     }
-                    AppMode::PasswordInput => {}
+                    AppMode::PasswordInput | AppMode::ConfirmCreateDb | AppMode::CreateDb => {}
                 }
                 app.last_key_was_g = is_g_key;
             }
@@ -686,8 +899,16 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
     let list = List::new(items).block(Block::default().title(list_title).borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
-    let footer_text = if app.mode == AppMode::Search { "CTRL-U/D: Meia Pág | ENTER: Copiar | CTRL-A/E/X: Ações | CTRL+C: Sair" } else if app.mode == AppMode::Normal { "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | ENTER: Copiar | CTRL-A/E/X: Ações | ESC/q: Sair" } else { "" };
-    if !footer_text.is_empty() { f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]); }
+    let footer_text = match app.mode {
+        AppMode::Search => "CTRL-U/D: Meia Pág | ENTER: Copiar | CTRL-A/E/X: Ações | CTRL+C: Sair",
+        AppMode::Normal => "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | ENTER: Copiar | CTRL-A/E/X: Ações | ESC/q: Sair",
+        AppMode::ConfirmDelete => "y: Sim | n/N: Não | CTRL+C: Sair",
+        AppMode::Form => "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar | ESC: Cancelar",
+        _ => "",
+    };
+    if !footer_text.is_empty() {
+        f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
+    }
 
     if app.mode == AppMode::ConfirmDelete {
         let area = centered_fixed_rect(60, 5, f.size());
@@ -695,7 +916,9 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
         f.render_widget(Paragraph::new(format!("\nDeseja EXCLUIR '{}'? [y/N]", app.get_selected().unwrap_or_default())).block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(app.theme.important))).alignment(Alignment::Center), area);
     } 
     else if app.mode == AppMode::Form {
-        let area = centered_rect(70, 80, f.size());
+        let show_dropdown = app.form_active_field == 0 && !app.filtered_groups.is_empty();
+        let height = if show_dropdown { 24 } else { 19 };
+        let area = centered_fixed_rect(70, height, f.size());
         f.render_widget(Clear, area);
         
         let form_block = Block::default().title(if app.form_is_edit { " Editar Entrada " } else { " Nova Entrada " }).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
@@ -704,7 +927,17 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
         let inner_area = form_block.inner(area);
         let show_dropdown = app.form_active_field == 0 && !app.filtered_groups.is_empty();
         
-        let form_chunks = Layout::default().direction(Direction::Vertical).constraints([ Constraint::Length(3), Constraint::Length(if show_dropdown { 5 } else { 0 }), Constraint::Length(3), Constraint::Length(3), Constraint::Length(3), Constraint::Length(3), Constraint::Min(1) ]).split(inner_area);
+        let form_chunks = Layout::default().direction(Direction::Vertical).constraints([ 
+            Constraint::Length(3), // Grupo
+            Constraint::Length(if show_dropdown { 5 } else { 0 }), // Dropdown
+            Constraint::Length(3), // Título
+            Constraint::Length(3), // Usuário
+            Constraint::Length(3), // Senha
+            Constraint::Length(3), // URL
+            Constraint::Length(1), // Espaçador pequeno
+            Constraint::Length(1), // Footer ajuda
+            Constraint::Min(0)     // Resto (vazio)
+        ]).split(inner_area);
 
         let group_rect = form_chunks[0].union(form_chunks[1]); 
         let group_block = Block::default().title(" Grupo ").borders(Borders::ALL).border_style(Style::default().fg(if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base }));
@@ -728,7 +961,7 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
         let url_color = if app.form_active_field == 4 { app.theme.annotation } else { app.theme.base };
         f.render_widget(Paragraph::new(format!(" {}{}", app.form_url, if app.form_active_field == 4 { "█" } else { "" })).block(Block::default().title(" URL ").borders(Borders::ALL).style(Style::default().fg(url_color))), form_chunks[5]);
 
-        f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[6]);
+        f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[7]);
     }
 
     if let Some((msg, time, is_error)) = &app.message {
@@ -739,11 +972,6 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
             f.render_widget(Paragraph::new(format!("\n{}", msg)).block(Block::default().title(title).borders(Borders::ALL).style(Style::default().fg(if *is_error { app.theme.alert_error } else { app.theme.alert_info }))).alignment(Alignment::Center), area);
         } else { app.message = None; }
     }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default().direction(Direction::Vertical).constraints([Constraint::Percentage((100 - percent_y) / 2), Constraint::Percentage(percent_y), Constraint::Percentage((100 - percent_y) / 2)]).split(r);
-    Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage((100 - percent_x) / 2), Constraint::Percentage(percent_x), Constraint::Percentage((100 - percent_x) / 2)]).split(popup_layout[1])[1]
 }
 
 fn centered_fixed_rect(width: u16, height: u16, r: Rect) -> Rect {
