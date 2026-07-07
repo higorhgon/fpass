@@ -108,7 +108,7 @@ impl PassStore {
         (entries, groups)
     }
 
-    /// Decifra e retorna a entrada estruturada.
+    /// Decifra e retorna a entrada estruturada (usado pelos testes de integração).
     pub fn show(&self, entry: &str) -> Result<EntryData, String> {
         let output = run_pass(&self.root, &["show", entry], None)?;
         let content = Zeroizing::new(String::from_utf8_lossy(&output.stdout).into_owned());
@@ -138,6 +138,91 @@ impl PassStore {
     pub fn rmdir_empty(&self, group: &str) -> Result<(), String> {
         let dir = self.root.join(group);
         fs::remove_dir(&dir).map_err(|e| format!("Erro removendo grupo: {}", e))
+    }
+
+    /// Decifra uma entrada usando gpg diretamente com `--pinentry-mode loopback`,
+    /// recebendo a passphrase via stdin em vez de depender do pinentry externo.
+    /// Necessário quando `pinentry-curses` conflita com a TUI do ratatui.
+    pub fn show_with_passphrase(&self, entry: &str, passphrase: &str) -> Result<EntryData, String> {
+        let file_path = self.root.join(format!("{}.gpg", entry));
+        if !file_path.exists() {
+            return Err(format!("Arquivo .gpg não encontrado para: {}", entry));
+        }
+        let file_str = file_path.to_string_lossy();
+
+        let mut cmd = Command::new("gpg");
+        cmd.args([
+            "--batch",
+            "--no-tty",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-fd",
+            "0",
+            "-d",
+        ])
+        .arg(file_str.as_ref())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+        let mut child =
+            cmd.spawn().map_err(|e| format!("Não foi possível executar gpg: {}", e))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(passphrase.as_bytes())
+                .map_err(|e| format!("Erro enviando passphrase: {}", e))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("Erro enviando passphrase: {}", e))?;
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("Erro aguardando gpg: {}", e))?;
+
+        if output.status.success() {
+            let content = Zeroizing::new(String::from_utf8_lossy(&output.stdout).into_owned());
+            Ok(parse_entry(&content))
+        } else {
+            let err = String::from_utf8_lossy(&output.stderr);
+            let err = err.trim();
+            if err.contains("loopback")
+                || err.contains("pinentry")
+                || err.contains("Inappropriate ioctl")
+            {
+                Err(format!(
+                    "GPG não configurado para loopback.\n\
+                     Adicione 'allow-loopback-pinentry' em ~/.gnupg/gpg-agent.conf\n\
+                     e recarregue: gpg-connect-agent reloadagent /bye"
+                ))
+            } else if err.contains("bad passphrase") || err.contains("decryption failed") {
+                Err("Senha GPG incorreta!".to_string())
+            } else {
+                Err(err.to_string())
+            }
+        }
+    }
+
+    /// Limpa o cache do gpg-agent para forçar verificação real da passphrase.
+    fn clear_agent_cache() {
+        let _ = Command::new("gpg-connect-agent")
+            .args(["RELOADAGENT", "/bye"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    /// Verifica se a passphrase está correta decifrando a primeira entrada
+    /// do store. Se não houver entradas, aceita a passphrase sem verificação.
+    pub fn verify_passphrase(&self, passphrase: &str) -> Result<(), String> {
+        Self::clear_agent_cache();
+        let (entries, _) = self.list();
+        let Some(first) = entries.into_iter().next() else {
+            return Ok(());
+        };
+        self.show_with_passphrase(&first, passphrase)?;
+        Ok(())
     }
 }
 

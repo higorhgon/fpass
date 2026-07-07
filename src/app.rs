@@ -1,5 +1,3 @@
-//! Estado da aplicação e lógica de negócio (sem desenho de UI).
-
 use crate::clipboard;
 use crate::config::Theme;
 use crate::history::History;
@@ -12,13 +10,13 @@ pub const EMPTY_GROUP_SUFFIX: &str = "/[vazio]";
 
 #[derive(PartialEq)]
 pub enum AppMode {
+    GpgUnlock,
     Search,
     Normal,
     ConfirmDelete,
     Form,
 }
 
-/// Filtro AND por termos, case-insensitive (compartilhado e testável).
 pub fn filter_items(items: &[String], query: &str) -> Vec<String> {
     let q = query.to_lowercase();
     let terms: Vec<&str> = q.split_whitespace().collect();
@@ -35,7 +33,6 @@ pub fn filter_items(items: &[String], query: &str) -> Vec<String> {
         .collect()
 }
 
-/// Divide "grupo/sub/titulo" em ("grupo/sub", "titulo").
 pub fn split_entry_path(entry: &str) -> (String, String) {
     match entry.rfind('/') {
         Some(idx) => (entry[..idx].to_string(), entry[idx + 1..].to_string()),
@@ -43,7 +40,6 @@ pub fn split_entry_path(entry: &str) -> (String, String) {
     }
 }
 
-/// Monta o caminho final a partir de grupo + título.
 pub fn join_entry_path(group: &str, title: &str) -> String {
     let group = group.trim().trim_matches('/');
     let title = title.trim();
@@ -68,6 +64,9 @@ pub struct App {
     pub list_height: usize,
     pub theme: Theme,
     pub clip_time: u64,
+
+    pub master_passphrase: Zeroizing<String>,
+    pub unlock_input: Zeroizing<String>,
 
     pub all_groups: Vec<String>,
     pub filtered_groups: Vec<String>,
@@ -97,7 +96,7 @@ impl App {
             filtered: vec![],
             search_query: String::new(),
             list_state: ListState::default(),
-            mode: AppMode::Search,
+            mode: AppMode::GpgUnlock,
             message: None,
             is_mac,
             history,
@@ -105,6 +104,8 @@ impl App {
             list_height: 10,
             theme,
             clip_time,
+            master_passphrase: Zeroizing::new(String::new()),
+            unlock_input: Zeroizing::new(String::new()),
             all_groups: vec![],
             filtered_groups: vec![],
             form_group_state: ListState::default(),
@@ -126,7 +127,6 @@ impl App {
         let (mut entries, groups) = self.store.list();
         self.all_groups = groups.clone();
 
-        // Marca grupos vazios para permitir excluí-los pela TUI
         for g in &groups {
             let prefix = format!("{}/", g);
             let has_children = entries.iter().any(|e| e.starts_with(&prefix))
@@ -210,6 +210,27 @@ impl App {
         self.message = Some((msg.to_string(), Instant::now(), is_error));
     }
 
+    // ---------- Unlock ----------
+    pub fn confirm_unlock(&mut self) {
+        let passphrase = std::mem::take(&mut self.unlock_input);
+
+        match self.store.verify_passphrase(&passphrase) {
+            Ok(()) => {
+                self.master_passphrase = passphrase;
+                self.mode = AppMode::Search;
+                self.set_msg("Desbloqueado com sucesso!", false);
+            }
+            Err(e) => {
+                self.set_msg(&format!("Erro: {}", e), true);
+            }
+        }
+    }
+
+    pub fn start_unlock(&mut self) {
+        self.unlock_input = Zeroizing::new(String::new());
+        self.mode = AppMode::GpgUnlock;
+    }
+
     // ---------- Ações ----------
     pub fn copy_password(&mut self) {
         let Some(entry) = self.get_selected() else {
@@ -219,7 +240,12 @@ impl App {
             self.set_msg("Isso é um grupo vazio!", true);
             return;
         }
-        match self.store.show(&entry) {
+        if self.master_passphrase.is_empty() {
+            self.start_unlock();
+            return;
+        }
+
+        match self.store.show_with_passphrase(&entry, &self.master_passphrase) {
             Ok(data) => {
                 match clipboard::copy_to_clipboard(&data.password, self.is_mac) {
                     Ok(()) => {
@@ -237,7 +263,15 @@ impl App {
                     Err(e) => self.set_msg(&format!("Erro ao copiar: {}", e), true),
                 }
             }
-            Err(e) => self.set_msg(&format!("Erro no pass: {}", e), true),
+            Err(e) => {
+                if e.contains("incorreta") || e.contains("Senha GPG") {
+                    self.master_passphrase = Zeroizing::new(String::new());
+                    self.start_unlock();
+                    self.set_msg("Senha GPG incorreta ou cache expirado. Digite novamente.", true);
+                } else {
+                    self.set_msg(&format!("Erro: {}", e), true);
+                }
+            }
         }
     }
 
@@ -264,7 +298,7 @@ impl App {
         let (group, title) = split_entry_path(&entry);
         self.form_group = group;
         self.form_title = title;
-        match self.store.show(&entry) {
+        match self.store.show_with_passphrase(&entry, &self.master_passphrase) {
             Ok(data) => {
                 self.form_username = data.username;
                 self.form_password = data.password;
@@ -326,8 +360,6 @@ impl App {
         };
 
         let result = if self.form_is_edit {
-            // Grava no caminho antigo e move se o caminho mudou
-            // (insert primeiro evita perder dados se o mv falhar).
             self.store.insert(&self.form_original_path, &data).and_then(|_| {
                 if path != self.form_original_path {
                     self.store.mv(&self.form_original_path, &path)
@@ -350,7 +382,6 @@ impl App {
             Err(e) => self.set_msg(&format!("Erro: {}", e), true),
         }
 
-        // Zera a senha do form ao sair
         self.form_password = Zeroizing::new(String::new());
         self.refresh_entries();
         self.mode = AppMode::Normal;

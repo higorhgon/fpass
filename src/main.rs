@@ -129,7 +129,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
         }
 
         match app.mode {
-            AppMode::Search => match key.code {
+                AppMode::Search => match key.code {
                 KeyCode::Esc => app.mode = AppMode::Normal,
                 KeyCode::Down => app.next(),
                 KeyCode::Up => app.previous(),
@@ -144,7 +144,7 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                 }
                 _ => {}
             },
-            AppMode::Normal => match key.code {
+                AppMode::Normal => match key.code {
                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                 KeyCode::Up | KeyCode::Char('k') => app.previous(),
@@ -246,6 +246,20 @@ fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<
                     }
                     _ => {}
                 },
+                _ => {}
+            },
+            AppMode::GpgUnlock => match key.code {
+                KeyCode::Enter => {
+                    if !app.unlock_input.is_empty() {
+                        app.confirm_unlock();
+                    }
+                }
+                KeyCode::Backspace => {
+                    app.unlock_input.pop();
+                }
+                KeyCode::Char(c) => {
+                    app.unlock_input.push(c);
+                }
                 _ => {}
             },
         }

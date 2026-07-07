@@ -25,6 +25,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App) {
     match app.mode {
         AppMode::ConfirmDelete => draw_confirm_delete(f, app),
         AppMode::Form => draw_form(f, app),
+        AppMode::GpgUnlock => draw_gpg_unlock(f, app),
         _ => {}
     }
 
@@ -78,6 +79,7 @@ fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
         }
         AppMode::ConfirmDelete => "y: Sim | n/N: Não | CTRL+C: Sair",
         AppMode::Form => "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar | ESC: Cancelar",
+        AppMode::GpgUnlock => "ENTER: Desbloquear",
     };
     let widget = Paragraph::new(text)
         .block(
@@ -184,6 +186,35 @@ fn draw_form(f: &mut Frame, app: &mut App) {
     f.render_widget(help, form_chunks[7]);
 }
 
+fn draw_gpg_unlock(f: &mut Frame, app: &App) {
+    let area = centered_fixed_rect(60, 8, f.size());
+    f.render_widget(Clear, area);
+
+    let block = Block::default()
+        .title(" Desbloquear Cofre GPG ")
+        .borders(Borders::ALL)
+        .style(Style::default().fg(app.theme.alert_info));
+    f.render_widget(block.clone(), area);
+
+    let inner = block.inner(area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(3), Constraint::Min(0)])
+        .split(inner);
+
+    f.render_widget(
+        Paragraph::new("Digite a senha GPG para desbloquear o cofre de senhas:")
+            .style(Style::default().fg(app.theme.guidance)),
+        chunks[0],
+    );
+
+    let hidden: String = app.unlock_input.chars().map(|_| '*').collect();
+    let input = Paragraph::new(format!(" {}{}", hidden, "█"))
+        .block(Block::default().borders(Borders::ALL))
+        .style(Style::default().fg(app.theme.annotation));
+    f.render_widget(input, chunks[1]);
+}
+
 fn draw_form_field(
     f: &mut Frame,
     app: &App,
@@ -215,7 +246,12 @@ fn cursor(focused: bool) -> &'static str {
 fn draw_message(f: &mut Frame, app: &mut App) {
     if let Some((msg, time, is_error)) = &app.message {
         if time.elapsed() < Duration::from_secs(3) {
-            let area = centered_fixed_rect(50, 5, f.size());
+            let terminal_w = f.size().width.saturating_sub(4);
+            let max_w = terminal_w.min(70).max(40) as usize;
+            let lines = count_wrapped_lines(msg, max_w.saturating_sub(4));
+            let h = (lines + 3).min(f.size().height.saturating_sub(2) as usize) as u16;
+            let w = max_w.min(terminal_w as usize) as u16;
+            let area = centered_fixed_rect(w, h, f.size());
             f.render_widget(Clear, area);
             let title = if *is_error { " Erro " } else { " Sucesso " };
             let color = if *is_error { app.theme.alert_error } else { app.theme.alert_info };
@@ -226,12 +262,30 @@ fn draw_message(f: &mut Frame, app: &mut App) {
                         .borders(Borders::ALL)
                         .style(Style::default().fg(color)),
                 )
-                .alignment(Alignment::Center);
+                .alignment(Alignment::Center)
+                .wrap(ratatui::widgets::Wrap { trim: false });
             f.render_widget(widget, area);
         } else {
             app.message = None;
         }
     }
+}
+
+/// Estima quantas linhas o texto ocupará com wrap na largura `width`.
+fn count_wrapped_lines(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return text.lines().count();
+    }
+    text.lines()
+        .map(|line| {
+            let len = line.len();
+            if len == 0 {
+                1
+            } else {
+                (len + width - 1) / width
+            }
+        })
+        .sum()
 }
 
 pub fn centered_fixed_rect(width: u16, height: u16, r: Rect) -> Rect {
