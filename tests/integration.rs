@@ -2,6 +2,7 @@
 //! Requer: pass, gpg com chave de teste, e PASSWORD_STORE_DIR/GNUPGHOME
 //! apontando pro ambiente de teste. Roda com:
 //!   cargo test --test integration -- --ignored --test-threads=1
+#![allow(dead_code)] // métodos do store não exercitados pelo teste geram warning falso
 
 use zeroize::Zeroizing;
 
