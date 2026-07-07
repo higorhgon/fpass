@@ -16,6 +16,10 @@ fn test_store() -> PassStore {
     PassStore::open(None).expect("PASSWORD_STORE_DIR deve apontar pro store de teste")
 }
 
+fn passphrase() -> String {
+    std::env::var("TEST_PASSPHRASE").unwrap_or_default()
+}
+
 #[test]
 #[ignore]
 fn integration_list_shows_entries_and_groups() {
@@ -33,7 +37,7 @@ fn integration_list_shows_entries_and_groups() {
 #[ignore]
 fn integration_show_parses_fields() {
     let s = test_store();
-    let d = s.show("Trabalho/servidor-admin").expect("show falhou");
+    let d = s.show_with_passphrase("Trabalho/servidor-admin", &passphrase()).expect("show falhou");
     assert_eq!(d.password.as_str(), "s3nh4-admin");
     assert_eq!(d.username, "fulano");
     assert_eq!(d.url, "https://exemplo.com.br/admin");
@@ -52,19 +56,19 @@ fn integration_insert_edit_preserves_extra_and_mv_rm() {
     s.insert("Teste/nova-entrada", &d).expect("insert falhou");
 
     // Edit: muda a senha, extra deve permanecer
-    let mut read = s.show("Teste/nova-entrada").expect("show falhou");
+    let mut read = s.show_with_passphrase("Teste/nova-entrada", &passphrase()).expect("show falhou");
     assert_eq!(read.extra, vec!["notes: preservar isto"]);
     read.password = Zeroizing::new("senha-editada".into());
     s.insert("Teste/nova-entrada", &read).expect("edit falhou");
-    let read2 = s.show("Teste/nova-entrada").expect("show falhou");
+    let read2 = s.show_with_passphrase("Teste/nova-entrada", &passphrase()).expect("show falhou");
     assert_eq!(read2.password.as_str(), "senha-editada");
     assert_eq!(read2.extra, vec!["notes: preservar isto"]);
 
     // Move
     s.mv("Teste/nova-entrada", "Teste/renomeada").expect("mv falhou");
-    assert!(s.show("Teste/renomeada").is_ok());
+    assert!(s.show_with_passphrase("Teste/renomeada", &passphrase()).is_ok());
 
     // Remove
     s.rm("Teste/renomeada").expect("rm falhou");
-    assert!(s.show("Teste/renomeada").is_err());
+    assert!(s.show_with_passphrase("Teste/renomeada", &passphrase()).is_err());
 }

@@ -108,13 +108,6 @@ impl PassStore {
         (entries, groups)
     }
 
-    /// Decifra e retorna a entrada estruturada (usado pelos testes de integração).
-    pub fn show(&self, entry: &str) -> Result<EntryData, String> {
-        let output = run_pass(&self.root, &["show", entry], None)?;
-        let content = Zeroizing::new(String::from_utf8_lossy(&output.stdout).into_owned());
-        Ok(parse_entry(&content))
-    }
-
     /// Cria/sobrescreve a entrada com conteúdo multi-linha.
     pub fn insert(&self, entry: &str, data: &EntryData) -> Result<(), String> {
         let content = build_entry_content(data);
