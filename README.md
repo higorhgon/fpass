@@ -8,7 +8,7 @@ Gerenciador de senhas com interface TUI (Terminal User Interface) para bancos Ke
 - Modal integrado para desbloqueio de banco com validação de senha
 - Listagem, adição, edição e exclusão de entradas via `keepassxc-cli`
 - Motor de frecency (frequência + recência) para ordenação inteligente
-- Sistema de temas personalizáveis em TOML
+- Sistema de temas personalizáveis em TOML (esquema de cores padrão: Catppuccin Mocha)
 - Atalhos de teclado: `j/k`, `gg/G`, `Ctrl+U/D`, `/` para buscar
 
 ## Requisitos
