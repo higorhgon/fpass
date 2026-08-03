@@ -90,10 +90,16 @@ fn clipboard_cmd(is_mac: bool) -> &'static str {
 }
 
 pub fn copy_to_clipboard(text: &str, is_mac: bool) -> Result<(), String> {
-    let mut child = Command::new(clipboard_cmd(is_mac))
-        .stdin(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(clipboard_cmd(is_mac));
+    if !is_mac {
+        // Sinaliza ao wl-clipboard (>=2.2.1) que o conteúdo é sensível: ele expõe
+        // o mime type `x-kde-passwordManagerHint`, que gerenciadores de clipboard
+        // como o cliphist reconhecem e usam para NÃO persistir o valor no
+        // histórico em disco. Isso resolve o problema na origem, em vez de tentar
+        // apagar a senha do histórico depois que ela já foi gravada.
+        cmd.arg("--sensitive");
+    }
+    let mut child = cmd.stdin(Stdio::piped()).spawn().map_err(|e| e.to_string())?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(text.as_bytes());
     }
@@ -120,6 +126,10 @@ pub fn spawn_clipboard_clearer(password: Zeroizing<String>, is_mac: bool) {
         std::thread::sleep(Duration::from_secs(10));
         clear_clipboard(is_mac);
         if !is_mac {
+            // Fallback para wl-clipboard < 2.2.1 / cliphist sem suporte ao hint
+            // `--sensitive` (ver copy_to_clipboard): tenta apagar a entrada do
+            // histórico persistido. Sem efeito (e sem erro) se o cliphist não
+            // estiver instalado ou se o hint já tiver evitado o armazenamento.
             let _ = Command::new("cliphist").args(["delete-query", password.as_str()]).status();
         }
         // `password` sai de escopo aqui e o Zeroizing sobrescreve a memória.
