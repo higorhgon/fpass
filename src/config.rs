@@ -57,16 +57,17 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Paleta padrão: Catppuccin Mocha.
     fn default() -> Self {
         Self {
-            alert_info: Color::Green,
-            alert_warn: Color::Yellow,
-            alert_error: Color::Red,
-            annotation: Color::Yellow,
-            base: Color::White,
-            guidance: Color::DarkGray,
-            important: Color::Red,
-            title: Color::Cyan,
+            alert_info: Color::Rgb(166, 227, 161),  // Green
+            alert_warn: Color::Rgb(249, 226, 175),  // Yellow
+            alert_error: Color::Rgb(243, 139, 168), // Red
+            annotation: Color::Rgb(203, 166, 247),  // Mauve
+            base: Color::Rgb(205, 214, 244),        // Text
+            guidance: Color::Rgb(127, 132, 156),    // Overlay1
+            important: Color::Rgb(235, 160, 172),   // Maroon
+            title: Color::Rgb(116, 199, 236),       // Sapphire
         }
     }
 }
