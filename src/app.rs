@@ -3,9 +3,10 @@ use ratatui::widgets::ListState;
 use std::time::Instant;
 use zeroize::Zeroizing;
 
+use crate::backend::{Backend, BackendKind, EntryData};
+use crate::clipboard;
 use crate::config::Theme;
 use crate::history::History;
-use crate::keepass::{self, run_kpcli};
 use crate::util::filter_items;
 use crate::AppMode;
 
@@ -59,8 +60,7 @@ pub struct StatusMessage {
 }
 
 pub struct App {
-    pub db_path: String,
-    pub password: Zeroizing<String>,
+    pub backend: Backend,
     pub entries: Vec<String>,
     pub filtered: Vec<String>,
     pub search_query: String,
@@ -84,6 +84,9 @@ pub struct App {
     pub form_password: Zeroizing<String>,
     pub form_url: String,
     pub form_notes: String,
+    // Linhas não modeladas de uma entrada `pass` (ex.: OTP), preservadas ao
+    // editar mesmo sem campo próprio no formulário.
+    pub form_extra: Vec<String>,
 
     // Retângulos calculados no último desenho da tela, usados para
     // converter cliques/eventos de mouse em posições lógicas da UI.
@@ -121,17 +124,23 @@ pub struct App {
     // Modal de ajuda com os atalhos de teclado (CTRL+?)
     pub help_modal_rect: Rect,
     pub help_previous_mode: AppMode,
+
+    // Modal de renomear grupo (só um campo de título)
+    pub rename_group_original: String,
+    pub rename_group_title: String,
+    pub rename_group_rect: Rect,
 }
 
 impl App {
-    pub fn new(db_path: String, password: Zeroizing<String>, is_mac: bool, history: History, theme: Theme) -> Self {
+    pub fn new(backend: Backend, is_mac: bool, history: History, theme: Theme) -> Self {
         let mut app = Self {
-            db_path, password, entries: vec![], filtered: vec![], search_query: String::new(), list_state: ListState::default(),
+            backend, entries: vec![], filtered: vec![], search_query: String::new(), list_state: ListState::default(),
             mode: AppMode::Search, message: None, is_mac, history, last_key_was_g: false, list_height: 10, theme,
             all_groups: vec![], filtered_groups: vec![], form_group_state: ListState::default(),
             form_is_edit: false, form_original_path: String::new(), form_active_field: 0,
             form_group: String::new(), form_title: String::new(), form_username: String::new(),
             form_password: Zeroizing::new(String::new()), form_url: String::new(), form_notes: String::new(),
+            form_extra: Vec::new(),
             term_size: Rect::default(), search_rect: Rect::default(), list_inner_rect: Rect::default(),
             form_rect: Rect::default(), confirm_delete_rect: Rect::default(), last_click: None,
             context_menu_anchor: (0, 0), context_menu_rect: Rect::default(), context_menu_item_rects: vec![],
@@ -141,34 +150,17 @@ impl App {
             info_dragging: false, info_drag_field: None, info_notes_scroll: 0, info_modal_rect: Rect::default(),
             info_previous_mode: AppMode::Normal,
             help_modal_rect: Rect::default(), help_previous_mode: AppMode::Normal,
+            rename_group_original: String::new(), rename_group_title: String::new(), rename_group_rect: Rect::default(),
         };
         app.refresh_entries();
         app
     }
 
     pub fn refresh_entries(&mut self) {
-        if let Ok(result) = run_kpcli(&["ls", "-Rfq", &self.db_path], &[self.password.as_str()]) {
-            self.entries.clear(); self.all_groups.clear();
-            let lines: Vec<String> = result.stdout.lines().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
-
-            let mut groups = Vec::new();
-            let mut entries = Vec::new();
-            for line in &lines {
-                if line.ends_with('/') { groups.push(line.trim_end_matches('/').to_string()); }
-                else { entries.push(line.clone()); }
-            }
-            self.all_groups = groups.clone();
-
-            // Identifica grupos vazios
-            for g in &groups {
-                let g_prefix = format!("{}/", g);
-                let is_empty = !lines.iter().any(|l| l.starts_with(&g_prefix) && l != &g_prefix);
-                if is_empty { entries.push(format!("{}/[vazio]", g)); }
-            }
-
-            self.entries = entries;
-            self.history.sort_items(&mut self.entries);
-        }
+        let (mut entries, groups) = self.backend.list();
+        self.all_groups = groups;
+        self.history.sort_items(&mut entries);
+        self.entries = entries;
         self.apply_filter();
     }
 
@@ -181,13 +173,11 @@ impl App {
         let Some(entry) = self.get_selected() else { return; };
         if entry.ends_with("/[vazio]") { self.set_msg("Isso é um grupo vazio!", true); return; }
 
-        let mut title = self.fetch_field(&entry, "Title");
-        if title.trim().is_empty() {
-            title = entry.rsplit('/').next().unwrap_or(&entry).to_string();
-        }
-        self.info_title = title;
-        self.info_url = self.fetch_field(&entry, "URL");
-        self.info_notes = self.fetch_field(&entry, "Notes");
+        let fallback = entry.rsplit('/').next().unwrap_or(&entry).to_string();
+        self.info_title = self.backend.title_for(&entry, &fallback);
+        let data = self.backend.fetch_entry(&entry).unwrap_or_default();
+        self.info_url = data.url;
+        self.info_notes = data.notes;
         self.info_active_field = 0;
         self.info_selection = [TextSelection::default(); 3];
         self.info_notes_scroll = 0;
@@ -253,7 +243,7 @@ impl App {
         self.info_dragging = false;
         let text = self.info_selected_text(field);
         if text.is_empty() { return; }
-        match keepass::copy_to_clipboard(&text, self.is_mac) {
+        match clipboard::copy_to_clipboard(&text, self.is_mac) {
             Ok(()) => self.set_msg("Copiado para a área de transferência!", false),
             Err(_) => self.set_msg("Erro ao copiar.", true),
         }
@@ -261,7 +251,8 @@ impl App {
 
     pub fn open_add_form(&mut self) {
         self.form_is_edit = false; self.form_group.clear(); self.form_title.clear(); self.form_username.clear();
-        self.form_password = Zeroizing::new(String::new()); self.form_url.clear(); self.form_notes.clear(); self.form_active_field = 0; self.mode = AppMode::Form;
+        self.form_password = Zeroizing::new(String::new()); self.form_url.clear(); self.form_notes.clear(); self.form_extra.clear();
+        self.form_active_field = 0; self.mode = AppMode::Form;
         self.hover_index = None;
         self.filter_form_groups();
     }
@@ -270,11 +261,51 @@ impl App {
         self.form_is_edit = true; self.form_original_path = entry.clone();
         if let Some(idx) = entry.rfind('/') { self.form_group = entry[..idx].to_string(); self.form_title = entry[idx+1..].to_string(); }
         else { self.form_group = String::new(); self.form_title = entry.clone(); }
-        self.form_username = self.fetch_field(&entry, "UserName");
-        self.form_password = Zeroizing::new(self.fetch_field(&entry, "Password"));
-        self.form_url = self.fetch_field(&entry, "URL");
-        self.form_notes = self.fetch_field(&entry, "Notes");
-        self.form_active_field = 3; self.mode = AppMode::Form; self.hover_index = None; self.filter_form_groups();
+        match self.backend.fetch_entry(&entry) {
+            Ok(data) => {
+                self.form_username = data.username;
+                self.form_password = data.password;
+                self.form_url = data.url;
+                self.form_notes = data.notes;
+                self.form_extra = data.extra;
+            }
+            Err(e) => self.set_msg(&format!("Erro lendo entrada: {}", e), true),
+        }
+        // Grupo/título já vieram do path; pula direto para o próximo campo
+        // relevante (Senha, que é sempre o campo mais editado).
+        self.form_active_field = if self.backend.kind() == BackendKind::Pass { 2 } else { 3 };
+        self.mode = AppMode::Form; self.hover_index = None; self.filter_form_groups();
+    }
+
+    /// Edita o item selecionado: uma entrada normal abre o formulário de
+    /// edição; um grupo vazio (`/[vazio]`) abre o modal de renomear grupo.
+    pub fn edit_selected(&mut self) {
+        let Some(entry) = self.get_selected() else { self.set_msg("Nenhuma entrada selecionada.", true); return; };
+        if entry.ends_with("/[vazio]") {
+            self.open_rename_group(entry);
+        } else {
+            self.open_edit_form(entry);
+        }
+    }
+
+    pub fn open_rename_group(&mut self, group_entry: String) {
+        let group = group_entry.trim_end_matches("/[vazio]").to_string();
+        let name = group.rsplit('/').next().unwrap_or(&group).to_string();
+        self.rename_group_original = group;
+        self.rename_group_title = name;
+        self.hover_index = None;
+        self.mode = AppMode::RenameGroup;
+    }
+
+    pub fn submit_rename_group(&mut self) {
+        let new_name = self.rename_group_title.trim().to_string();
+        if new_name.is_empty() { self.set_msg("O nome não pode ser vazio!", true); return; }
+        match self.backend.rename_group(&self.rename_group_original, &new_name) {
+            Ok(()) => self.set_msg("Grupo renomeado com sucesso!", false),
+            Err(e) => self.set_msg(&format!("Erro ao renomear grupo: {}", e), true),
+        }
+        self.refresh_entries();
+        self.mode = AppMode::Normal;
     }
 
     /// Abre o menu de contexto pela tecla de espaço, ancorado próximo à
@@ -302,21 +333,12 @@ impl App {
         self.mode = self.context_menu_prev_mode;
         match action {
             ContextAction::AddNew => self.open_add_form(),
-            ContextAction::Edit => {
-                if let Some(entry) = self.get_selected() { self.open_edit_form(entry); }
-                else { self.set_msg("Nenhuma entrada selecionada.", true); }
-            }
+            ContextAction::Edit => self.edit_selected(),
             ContextAction::Delete => {
                 if self.get_selected().is_some() { self.hover_index = None; self.mode = AppMode::ConfirmDelete; }
                 else { self.set_msg("Nenhuma entrada selecionada.", true); }
             }
         }
-    }
-
-    fn fetch_field(&self, path: &str, field: &str) -> String {
-        run_kpcli(&["show", "-q", &self.db_path, path, "-a", field], &[self.password.as_str()])
-            .map(|r| r.stdout.trim().to_string())
-            .unwrap_or_default()
     }
 
     pub fn filter_form_groups(&mut self) {
@@ -334,29 +356,26 @@ impl App {
 
         if title.is_empty() { self.set_msg("O Título não pode ser vazio!", true); return; }
 
-        // Tenta criar o grupo primeiro (mkdir no keepassxc-cli não falha se o grupo já existir, ou podemos ignorar o erro)
-        if !group.is_empty() {
-            let _ = run_kpcli(&["mkdir", "-q", &self.db_path, &group], &[self.password.as_str()]);
-        }
+        let data = EntryData {
+            username: self.form_username.trim().to_string(),
+            password: self.form_password.clone(),
+            url: self.form_url.trim().to_string(),
+            notes: self.form_notes.clone(),
+            extra: self.form_extra.clone(),
+        };
 
-        if self.form_is_edit {
-            if path != self.form_original_path {
-                // O comando 'mv' do keepassxc-cli espera [database] [origem] [grupo_destino]
-                // Se o destino for a raiz, o grupo_destino deve ser "/"
-                let dest_group = if group.is_empty() { "/" } else { &group };
-                let _ = run_kpcli(&["mv", "-q", &self.db_path, &self.form_original_path, dest_group], &[self.password.as_str()]);
-            }
-            let result = run_kpcli(
-                &["edit", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, "--notes", &self.form_notes, &self.db_path, &path],
-                &[self.password.as_str(), self.form_password.as_str(), self.form_password.as_str()],
-            );
-            if result.map(|r| r.success).unwrap_or(false) { self.set_msg("Entrada editada com sucesso!", false); } else { self.set_msg("Erro ao editar.", true); }
+        let result = if self.form_is_edit {
+            self.backend.edit_entry(&self.form_original_path, &path, &group, &data)
         } else {
-            let result = run_kpcli(
-                &["add", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, "--notes", &self.form_notes, &self.db_path, &path],
-                &[self.password.as_str(), self.form_password.as_str(), self.form_password.as_str()],
-            );
-            if result.map(|r| r.success).unwrap_or(false) { self.history.record_use(&path); self.set_msg("Entrada adicionada!", false); } else { self.set_msg("Erro ao adicionar.", true); }
+            self.backend.add_entry(&path, &group, &data)
+        };
+
+        match result {
+            Ok(()) => {
+                if !self.form_is_edit { self.history.record_use(&path); }
+                self.set_msg(if self.form_is_edit { "Entrada editada com sucesso!" } else { "Entrada adicionada!" }, false);
+            }
+            Err(_) => self.set_msg(if self.form_is_edit { "Erro ao editar." } else { "Erro ao adicionar." }, true),
         }
         self.refresh_entries(); self.mode = AppMode::Normal;
     }
@@ -379,7 +398,7 @@ impl App {
             text: msg.to_string(),
             time: Instant::now(),
             is_error: false,
-            clipboard_clear_secs: Some(keepass::CLIPBOARD_CLEAR_SECS),
+            clipboard_clear_secs: Some(clipboard::CLIPBOARD_CLEAR_SECS),
         });
     }
 
@@ -391,17 +410,15 @@ impl App {
         }
         self.history.record_use(&entry);
 
-        let result = run_kpcli(&["show", "-q", &self.db_path, &entry, "-a", "Password"], &[self.password.as_str()]);
-        let Ok(result) = result else {
+        let Ok(entry_pass) = self.backend.fetch_password(&entry) else {
             self.set_msg("Erro ao copiar senha.", true);
             return;
         };
-        let entry_pass = Zeroizing::new(result.stdout.trim().to_string());
 
-        match keepass::copy_to_clipboard(&entry_pass, self.is_mac) {
+        match clipboard::copy_to_clipboard(&entry_pass, self.is_mac) {
             Ok(()) => {
                 self.set_clipboard_msg(&format!("Copiado: {}", entry));
-                keepass::spawn_clipboard_clearer(entry_pass, self.is_mac);
+                clipboard::spawn_clipboard_clearer(entry_pass, self.is_mac);
             }
             Err(_) => self.set_msg("Erro ao copiar senha.", true),
         }
@@ -410,19 +427,18 @@ impl App {
     pub fn delete_selected(&mut self) {
         let Some(entry) = self.get_selected() else { return; };
         let is_empty_group = entry.ends_with("/[vazio]");
-        let (cmd_name, path_to_del) = if is_empty_group {
-            ("rmdir", entry.trim_end_matches("/[vazio]").to_string())
+        let result = if is_empty_group {
+            self.backend.remove_group(entry.trim_end_matches("/[vazio]"))
         } else {
-            ("rm", entry)
+            self.backend.remove_entry(&entry)
         };
 
-        match run_kpcli(&[cmd_name, "-q", &self.db_path, &path_to_del], &[self.password.as_str()]) {
-            Ok(result) if result.success => {
+        match result {
+            Ok(()) => {
                 self.set_msg(if is_empty_group { "Grupo excluído!" } else { "Entrada excluída!" }, false);
                 self.refresh_entries();
                 self.previous();
             }
-            Ok(result) => self.set_msg(&format!("Erro ao excluir: {}", result.stderr), true),
             Err(e) => self.set_msg(&format!("Erro ao excluir: {}", e), true),
         }
     }

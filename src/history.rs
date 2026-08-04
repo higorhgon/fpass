@@ -82,11 +82,17 @@ impl History {
     }
 
     pub fn sort_items(&self, items: &mut [String]) {
+        self.sort_by_score(items, |s| s.as_str());
+    }
+
+    /// Generaliza `sort_items` para qualquer tipo, via uma função que extrai
+    /// a chave textual usada para consultar o histórico (ex.: `DbRef::path`).
+    pub fn sort_by_score<T>(&self, items: &mut [T], key: impl Fn(&T) -> &str) {
         if self.enabled {
             items.sort_by(|a, b| {
-                let score_a = self.get_score(a);
-                let score_b = self.get_score(b);
-                score_b.cmp(&score_a).then_with(|| a.cmp(b))
+                let score_a = self.get_score(key(a));
+                let score_b = self.get_score(key(b));
+                score_b.cmp(&score_a).then_with(|| key(a).cmp(key(b)))
             });
         }
     }

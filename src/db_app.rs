@@ -15,14 +15,15 @@ use ratatui::{
 use std::{io, time::Duration};
 use zeroize::Zeroizing;
 
+use crate::backend::{Backend, DbRef};
 use crate::config::Theme;
-use crate::keepass::{self, run_kpcli};
-use crate::util::{centered_fixed_rect, filter_items};
+use crate::keepass;
+use crate::util::centered_fixed_rect;
 use crate::AppMode;
 
 pub struct DbApp {
-    pub entries: Vec<String>,
-    pub filtered: Vec<String>,
+    pub entries: Vec<DbRef>,
+    pub filtered: Vec<DbRef>,
     pub search_query: String,
     pub list_state: ListState,
     pub mode: AppMode,
@@ -30,7 +31,7 @@ pub struct DbApp {
     pub list_height: usize,
     pub theme: Theme,
     pub password_input: Zeroizing<String>,
-    pub selected_db: Option<String>,
+    pub selected_db: Option<DbRef>,
     pub error_msg: Option<String>,
     pub new_db_name: String,
     pub new_db_password: Zeroizing<String>,
@@ -39,7 +40,7 @@ pub struct DbApp {
 }
 
 impl DbApp {
-    fn new(dbs: Vec<String>, theme: Theme) -> Self {
+    fn new(dbs: Vec<DbRef>, theme: Theme) -> Self {
         let mode = if dbs.is_empty() { AppMode::ConfirmCreateDb } else { AppMode::Search };
         let mut app = Self {
             entries: dbs.clone(), filtered: dbs, search_query: String::new(),
@@ -61,7 +62,16 @@ impl DbApp {
     }
 
     fn apply_filter(&mut self) {
-        self.filtered = filter_items(&self.entries, &self.search_query);
+        let q = self.search_query.to_lowercase();
+        let terms: Vec<&str> = q.split_whitespace().collect();
+        self.filtered = if terms.is_empty() {
+            self.entries.clone()
+        } else {
+            self.entries.iter().filter(|d| {
+                let lower = d.path.to_lowercase();
+                terms.iter().all(|t| lower.contains(t))
+            }).cloned().collect()
+        };
         self.list_state.select(if self.filtered.is_empty() { None } else { Some(0) });
     }
 
@@ -73,7 +83,7 @@ impl DbApp {
     fn half_page_up(&mut self) { if self.filtered.is_empty() { return; } let step = (self.list_height.saturating_sub(2) / 2).max(1); let i = self.list_state.selected().unwrap_or(0); self.list_state.select(Some(i.saturating_sub(step))); }
 }
 
-pub fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(String, Zeroizing<String>)>, Box<dyn std::error::Error>> {
+pub fn run_selection_tui(dbs: Vec<DbRef>, theme: Theme) -> Result<Option<Backend>, Box<dyn std::error::Error>> {
     enable_raw_mode()?; let mut stdout = io::stdout(); execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout); let mut terminal = Terminal::new(backend)?;
     let mut app = DbApp::new(dbs, theme);
@@ -125,8 +135,8 @@ pub fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(Strin
                             } else if !app.new_db_name.is_empty() {
                                 match keepass::create_database(&app.new_db_name, app.new_db_password.as_str()) {
                                     Ok(path) => {
-                                        let path_str = path.to_string_lossy().to_string();
-                                        break Some((path_str, app.new_db_password.clone()));
+                                        let db_path = path.to_string_lossy().to_string();
+                                        break Some(Backend::Keepass { db_path, password: app.new_db_password.clone() });
                                     }
                                     Err(e) => {
                                         app.error_msg = Some(e);
@@ -159,11 +169,11 @@ pub fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(Strin
                         }
                         KeyCode::Enter => {
                             if let Some(db) = app.selected_db.clone() {
-                                // Testa a senha em segundo plano sem fechar o TUI!
-                                match run_kpcli(&["ls", "-q", &db], &[app.password_input.as_str()]) {
-                                    Ok(result) if result.success => break Some((db, app.password_input.clone())),
-                                    _ => {
-                                        app.error_msg = Some("Senha incorreta!".to_string());
+                                // Autentica em segundo plano sem fechar o TUI!
+                                match Backend::open(&db, app.password_input.clone()) {
+                                    Ok(backend) => break Some(backend),
+                                    Err(e) => {
+                                        app.error_msg = Some(e);
                                         app.password_input = Zeroizing::new(String::new());
                                     }
                                 }
@@ -204,7 +214,12 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
     f.render_widget(Paragraph::new(search_text).block(Block::default().title(" Filtrar Banco (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
 
     let list_color = if app.mode == AppMode::Normal { app.theme.title } else { app.theme.base };
-    let items: Vec<ListItem> = app.filtered.iter().map(|e| ListItem::new(e.as_str())).collect();
+    let items: Vec<ListItem> = app.filtered.iter().map(|d| {
+        ListItem::new(Line::from(vec![
+            Span::styled(format!("[{}] ", d.kind.label()), Style::default().fg(app.theme.annotation)),
+            Span::raw(d.path.as_str()),
+        ]))
+    }).collect();
     let list = List::new(items).block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
@@ -224,7 +239,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let modal_area = centered_fixed_rect(50, 7, f.size());
         f.render_widget(Clear, modal_area);
 
-        let db_name = app.selected_db.as_deref().unwrap_or("");
+        let db_name = app.selected_db.as_ref().map(|d| d.path.as_str()).unwrap_or("");
         let db_short = std::path::Path::new(db_name).file_name().unwrap_or_default().to_string_lossy();
 
         let modal_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.alert_info };
@@ -268,7 +283,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
     if app.mode == AppMode::ConfirmCreateDb {
         let area = centered_fixed_rect(60, 5, f.size());
         f.render_widget(Clear, area);
-        f.render_widget(Paragraph::new("\nNenhum arquivo .kdbx encontrado.\nDeseja criar um banco de dados? [y/N]").block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_warn))).alignment(Alignment::Center), area);
+        f.render_widget(Paragraph::new("\nNenhum banco de dados encontrado.\nDeseja criar um banco de dados KeePassXC? [y/N]").block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_warn))).alignment(Alignment::Center), area);
     }
 
     if app.mode == AppMode::CreateDb {

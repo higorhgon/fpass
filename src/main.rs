@@ -1,8 +1,11 @@
 mod app;
+mod backend;
+mod clipboard;
 mod config;
 mod db_app;
 mod history;
 mod keepass;
+mod pass;
 mod ui;
 mod util;
 
@@ -29,6 +32,7 @@ pub enum AppMode {
     Info,
     ContextMenu,
     Help,
+    RenameGroup,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Ok(());
             }
             "-h" | "--help" => {
-                println!("fpass - Gerenciador de senhas TUI para KeePassXC");
+                println!("fpass - Gerenciador de senhas TUI para KeePassXC e pass");
                 println!("\nUso:");
                 println!("  fpass [opções]");
                 println!("\nOpções:");
@@ -62,23 +66,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (config, theme) = config::setup_and_load_config();
     let mut history = History::new(config.recency_enabled);
 
-    let mut dbs = keepass::find_databases(&config.search_path);
-    history.sort_items(&mut dbs);
+    let mut dbs = backend::find_databases(&config.search_path);
+    history.sort_by_score(&mut dbs, |d| d.path.as_str());
 
-    let (db_path, password) = match db_app::run_selection_tui(dbs, theme.clone())? {
-        Some(res) => res,
+    let db_backend = match db_app::run_selection_tui(dbs, theme.clone())? {
+        Some(b) => b,
         None => std::process::exit(0),
     };
 
-    history.record_use(&db_path);
+    if let backend::Backend::Keepass { db_path, .. } = &db_backend {
+        history.record_use(db_path);
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let term_backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(term_backend)?;
 
-    let mut app = App::new(db_path, password, is_mac, history, theme);
+    let mut app = App::new(db_backend, is_mac, history, theme);
     let res = ui::run_app(&mut terminal, &mut app);
 
     disable_raw_mode()?;

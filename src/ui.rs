@@ -10,6 +10,7 @@ use ratatui::{
 use std::{io, time::{Duration, Instant}};
 
 use crate::app::{App, ContextAction, TextSelection};
+use crate::backend::BackendKind;
 use crate::util::centered_fixed_rect;
 use crate::AppMode;
 
@@ -63,6 +64,7 @@ fn process_event(app: &mut App, event: Event) -> bool {
                 AppMode::Info => handle_info_key(app, key.code),
                 AppMode::ContextMenu => handle_context_menu_key(app, key.code),
                 AppMode::Help => handle_help_key(app, key.code),
+                AppMode::RenameGroup => handle_rename_group_key(app, key.code),
                 AppMode::PasswordInput | AppMode::ConfirmCreateDb | AppMode::CreateDb => {}
             }
             app.last_key_was_g = is_g_key;
@@ -81,11 +83,7 @@ fn handle_ctrl_key(app: &mut App, code: KeyCode) {
         KeyCode::Char('d') => app.half_page_down(),
         KeyCode::Char('u') => app.half_page_up(),
         KeyCode::Char('a') => app.open_add_form(),
-        KeyCode::Char('e') => {
-            if let Some(entry) = app.get_selected() {
-                app.open_edit_form(entry);
-            }
-        }
+        KeyCode::Char('e') => app.edit_selected(),
         KeyCode::Char('x') => {
             if app.get_selected().is_some() {
                 app.hover_index = None;
@@ -150,10 +148,13 @@ fn handle_confirm_delete_key(app: &mut App, code: KeyCode) {
 }
 
 fn handle_info_key(app: &mut App, code: KeyCode) {
+    // O formato do pass não tem URL/Notas como campos próprios (ver
+    // draw_info_modal_pass): só o Título é navegável nesse caso.
+    let field_count = if app.backend.kind() == BackendKind::Pass { 1 } else { 3 };
     match code {
         KeyCode::Esc | KeyCode::Char('q') => app.mode = app.info_previous_mode,
-        KeyCode::Tab => app.info_active_field = (app.info_active_field + 1) % 3,
-        KeyCode::BackTab => app.info_active_field = if app.info_active_field == 0 { 2 } else { app.info_active_field - 1 },
+        KeyCode::Tab => app.info_active_field = (app.info_active_field + 1) % field_count,
+        KeyCode::BackTab => app.info_active_field = if app.info_active_field == 0 { field_count - 1 } else { app.info_active_field - 1 },
         KeyCode::Down if app.info_active_field == 2 => app.info_notes_scroll = app.info_notes_scroll.saturating_add(1),
         KeyCode::Up if app.info_active_field == 2 => app.info_notes_scroll = app.info_notes_scroll.saturating_sub(1),
         _ => {}
@@ -180,6 +181,16 @@ fn handle_context_menu_key(app: &mut App, code: KeyCode) {
 fn handle_help_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.mode = app.help_previous_mode,
+        _ => {}
+    }
+}
+
+fn handle_rename_group_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc => app.mode = AppMode::Normal,
+        KeyCode::Enter => app.submit_rename_group(),
+        KeyCode::Backspace => { app.rename_group_title.pop(); }
+        KeyCode::Char(c) => { app.rename_group_title.push(c); }
         _ => {}
     }
 }
@@ -255,6 +266,9 @@ fn handle_left_down(app: &mut App, column: u16, row: u16) {
         AppMode::Help => {
             if !rect_contains(app.help_modal_rect, column, row) { app.mode = app.help_previous_mode; }
         }
+        AppMode::RenameGroup => {
+            if !rect_contains(app.rename_group_rect, column, row) { app.mode = AppMode::Normal; }
+        }
         AppMode::Info => {
             if rect_contains(app.info_modal_rect, column, row) {
                 if let Some(field) = info_field_at(app, column, row) {
@@ -319,17 +333,21 @@ fn handle_right_down(app: &mut App, column: u16, row: u16) {
 }
 
 fn handle_form_key(app: &mut App, code: KeyCode) {
+    // Entradas do tipo `pass` só expõem Grupo/Título/Senha (3 campos); o
+    // KeePassXC mantém o formulário completo (6 campos, com Notas).
+    let is_pass = app.backend.kind() == BackendKind::Pass;
+    let field_count = if is_pass { 3 } else { 6 };
     match code {
         KeyCode::Esc => app.mode = AppMode::Normal,
-        KeyCode::BackTab => { app.form_active_field = if app.form_active_field == 0 { 5 } else { app.form_active_field - 1 }; }
-        KeyCode::Tab => { app.form_active_field = (app.form_active_field + 1) % 6; }
+        KeyCode::BackTab => { app.form_active_field = if app.form_active_field == 0 { field_count - 1 } else { app.form_active_field - 1 }; }
+        KeyCode::Tab => { app.form_active_field = (app.form_active_field + 1) % field_count; }
         KeyCode::Down => { if app.form_active_field == 0 { app.form_next_group(); } }
         KeyCode::Up => { if app.form_active_field == 0 { app.form_prev_group(); } }
         KeyCode::Enter => {
             if let Some(idx) = (app.form_active_field == 0).then(|| app.form_group_state.selected()).flatten() {
                 app.form_group = app.filtered_groups[idx].clone();
                 app.form_active_field = 1;
-            } else if app.form_active_field == 5 {
+            } else if !is_pass && app.form_active_field == 5 {
                 // Campo de Notas: ENTER quebra linha em vez de confirmar o formulário.
                 app.form_notes.push('\n');
             } else {
@@ -339,6 +357,7 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
         KeyCode::Backspace => match app.form_active_field {
             0 => { app.form_group.pop(); app.filter_form_groups(); }
             1 => { app.form_title.pop(); }
+            2 if is_pass => { app.form_password.pop(); }
             2 => { app.form_username.pop(); }
             3 => { app.form_password.pop(); }
             4 => { app.form_url.pop(); }
@@ -348,6 +367,7 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
         KeyCode::Char(c) => match app.form_active_field {
             0 => { app.form_group.push(c); app.filter_form_groups(); }
             1 => { app.form_title.push(c); }
+            2 if is_pass => { app.form_password.push(c); }
             2 => { app.form_username.push(c); }
             3 => { app.form_password.push(c); }
             4 => { app.form_url.push(c); }
@@ -370,6 +390,7 @@ fn footer_hint_text(mode: AppMode) -> &'static str {
         AppMode::Info => "Arraste para copiar | TAB: Alternar | ESC: Fechar",
         AppMode::ContextMenu => "j/k: Navegar | ENTER: Confirmar | ESC: Fechar",
         AppMode::Help => "ESC: Fechar",
+        AppMode::RenameGroup => "ENTER: Renomear | ESC: Cancelar",
         _ => "",
     }
 }
@@ -484,6 +505,7 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
         AppMode::Info => draw_info_modal(f, app),
         AppMode::ContextMenu => draw_context_menu(f, app),
         AppMode::Help => draw_help_modal(f, app),
+        AppMode::RenameGroup => draw_rename_group_modal(f, app),
         _ => {}
     }
 
@@ -497,8 +519,33 @@ fn draw_confirm_delete_modal(f: &mut Frame, app: &mut App) {
     f.render_widget(Paragraph::new(format!("\nDeseja EXCLUIR '{}'? [y/N]", app.get_selected().unwrap_or_default())).block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(app.theme.important))).alignment(Alignment::Center), area);
 }
 
+fn draw_rename_group_modal(f: &mut Frame, app: &mut App) {
+    let area = centered_fixed_rect(50, 6, f.size());
+    app.rename_group_rect = area;
+    f.render_widget(Clear, area);
+
+    let block = Block::default().title(" Renomear Grupo ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
+    f.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    let chunks = Layout::default().direction(Direction::Vertical).constraints([
+        Constraint::Length(3), // Título
+        Constraint::Length(1), // Footer ajuda
+    ]).split(inner);
+
+    f.render_widget(Paragraph::new(format!(" {}█", app.rename_group_title)).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(app.theme.annotation))), chunks[0]);
+    f.render_widget(Paragraph::new("ENTER: Renomear | ESC: Cancelar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[1]);
+}
+
 fn draw_form_modal(f: &mut Frame, app: &mut App) {
+    let is_pass = app.backend.kind() == BackendKind::Pass;
     let show_dropdown = app.form_active_field == 0 && !app.filtered_groups.is_empty();
+
+    if is_pass {
+        draw_form_modal_pass(f, app, show_dropdown);
+        return;
+    }
+
     let height = if show_dropdown { 29 } else { 24 };
     let area = centered_fixed_rect(70, height, f.size());
     app.form_rect = area;
@@ -523,16 +570,7 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
     ]).split(inner_area);
 
     let group_rect = form_chunks[0].union(form_chunks[1]);
-    let group_block = Block::default().title(" Grupo ").borders(Borders::ALL).border_style(Style::default().fg(if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base }));
-    f.render_widget(group_block, group_rect);
-    f.render_widget(Paragraph::new(format!(" {}{}", app.form_group, if app.form_active_field == 0 { "█" } else { "" })), Rect::new(group_rect.x + 1, group_rect.y + 1, group_rect.width - 2, 1));
-
-    if show_dropdown {
-        let items: Vec<ListItem> = app.filtered_groups.iter().map(|g| ListItem::new(g.as_str())).collect();
-        let divider_color = if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base };
-        let list = List::new(items).block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(divider_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol("> ");
-        f.render_stateful_widget(list, Rect::new(group_rect.x + 1, group_rect.y + 2, group_rect.width - 2, group_rect.height - 3), &mut app.form_group_state);
-    }
+    draw_form_group_field(f, app, group_rect, show_dropdown);
 
     let title_color = if app.form_active_field == 1 { app.theme.annotation } else { app.theme.base };
     f.render_widget(Paragraph::new(format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" })).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
@@ -557,6 +595,59 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
     f.render_widget(Paragraph::new(wrapped[start..].join("\n")), notes_inner);
 
     f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar (Notas: quebra linha)").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[8]);
+}
+
+/// Formulário reduzido para entradas do tipo `pass`: apenas Grupo, Título e
+/// Senha — o formato do pass não tem Usuário/URL/Notas como campos próprios.
+fn draw_form_modal_pass(f: &mut Frame, app: &mut App, show_dropdown: bool) {
+    // Soma dos Constraint::Length abaixo (Grupo 3 + Dropdown 0/5 + Título 3 +
+    // Senha 3 + espaçador 1 + footer 1) + 2 linhas de borda do modal. Um valor
+    // menor faz o solver de layout do ratatui encolher o primeiro bloco
+    // (Grupo) para caber, quebrando a borda dele.
+    let height = if show_dropdown { 18 } else { 13 };
+    let area = centered_fixed_rect(60, height, f.size());
+    app.form_rect = area;
+    f.render_widget(Clear, area);
+
+    let form_block = Block::default().title(if app.form_is_edit { " Editar Entrada " } else { " Nova Entrada " }).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
+    f.render_widget(form_block.clone(), area);
+
+    let inner_area = form_block.inner(area);
+
+    let form_chunks = Layout::default().direction(Direction::Vertical).constraints([
+        Constraint::Length(3), // Grupo
+        Constraint::Length(if show_dropdown { 5 } else { 0 }), // Dropdown
+        Constraint::Length(3), // Título
+        Constraint::Length(3), // Senha
+        Constraint::Length(1), // Espaçador pequeno
+        Constraint::Length(1), // Footer ajuda
+        Constraint::Min(0)     // Resto (vazio)
+    ]).split(inner_area);
+
+    let group_rect = form_chunks[0].union(form_chunks[1]);
+    draw_form_group_field(f, app, group_rect, show_dropdown);
+
+    let title_color = if app.form_active_field == 1 { app.theme.annotation } else { app.theme.base };
+    f.render_widget(Paragraph::new(format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" })).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
+
+    let pass_color = if app.form_active_field == 2 { app.theme.annotation } else { app.theme.base };
+    let hidden: String = app.form_password.chars().map(|_| '*').collect();
+    f.render_widget(Paragraph::new(format!(" {}{}", hidden, if app.form_active_field == 2 { "█" } else { "" })).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[3]);
+
+    f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[5]);
+}
+
+fn draw_form_group_field(f: &mut Frame, app: &mut App, group_rect: Rect, show_dropdown: bool) {
+    let group_block = Block::default().title(" Grupo ").borders(Borders::ALL).border_style(Style::default().fg(if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base }));
+    f.render_widget(group_block, group_rect);
+    f.render_widget(Paragraph::new(format!(" {}{}", app.form_group, if app.form_active_field == 0 { "█" } else { "" })), Rect::new(group_rect.x + 1, group_rect.y + 1, group_rect.width - 2, 1));
+
+    if show_dropdown {
+        let items: Vec<ListItem> = app.filtered_groups.iter().map(|g| ListItem::new(g.as_str())).collect();
+        let divider_color = if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base };
+        let list = List::new(items).block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(divider_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol("> ");
+        f.render_stateful_widget(list, Rect::new(group_rect.x + 1, group_rect.y + 2, group_rect.width - 2, group_rect.height - 3), &mut app.form_group_state);
+    }
 }
 
 /// Divide `line` em spans estilizados, invertendo a cor da parte que cai
@@ -602,6 +693,11 @@ fn draw_info_field(f: &mut Frame, app: &mut App, field: usize, label: &str, area
 }
 
 fn draw_info_modal(f: &mut Frame, app: &mut App) {
+    if app.backend.kind() == BackendKind::Pass {
+        draw_info_modal_pass(f, app);
+        return;
+    }
+
     let area = centered_fixed_rect(74, 20, f.size());
     app.info_modal_rect = area;
     f.render_widget(Clear, area);
@@ -638,6 +734,27 @@ fn draw_info_modal(f: &mut Frame, app: &mut App) {
     f.render_widget(Paragraph::new(out_lines), notes_inner);
 
     f.render_widget(Paragraph::new("Clique e arraste em um campo para selecionar e copiar | TAB: Alternar | ESC: Fechar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[3]);
+}
+
+/// Modal de informações reduzido para entradas `pass`: o formato não tem
+/// URL/Notas como campos próprios, então só o Título é exibido.
+fn draw_info_modal_pass(f: &mut Frame, app: &mut App) {
+    let area = centered_fixed_rect(74, 6, f.size());
+    app.info_modal_rect = area;
+    f.render_widget(Clear, area);
+
+    let block = Block::default().title(" Informações da Entrada ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+    f.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    let chunks = Layout::default().direction(Direction::Vertical).constraints([
+        Constraint::Length(3), // Título
+        Constraint::Length(1), // Rodapé
+    ]).split(inner);
+
+    draw_info_field(f, app, 0, "Título", chunks[0]);
+
+    f.render_widget(Paragraph::new("Clique e arraste para selecionar e copiar | ESC: Fechar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[1]);
 }
 
 fn draw_context_menu(f: &mut Frame, app: &mut App) {
@@ -697,7 +814,7 @@ fn draw_help_modal(f: &mut Frame, app: &mut App) {
             ("TAB", "Ver detalhes da entrada"),
             ("ESPAÇO", "Abrir menu de ações"),
             ("CTRL-A", "Adicionar entrada"),
-            ("CTRL-E", "Editar entrada"),
+            ("CTRL-E", "Editar entrada / renomear grupo"),
             ("CTRL-X", "Excluir entrada"),
         ]),
         ("BUSCA", &[
