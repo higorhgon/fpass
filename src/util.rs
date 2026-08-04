@@ -27,6 +27,20 @@ pub fn centered_fixed_rect(width: u16, height: u16, r: Rect) -> Rect {
     Rect::new(col, row, width.min(r.width), height.min(r.height))
 }
 
+/// Retorna o final de `text` que cabe em `width` colunas. Usado nos campos
+/// de uma linha só (Paragraph sem wrap trunca do fim automaticamente): sem
+/// isso, o cursor digitado no fim do texto some da área visível assim que o
+/// conteúdo passa da largura da caixa, dando a impressão de que novos
+/// caracteres digitados não estão sendo registrados.
+pub fn scroll_tail(text: &str, width: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= width {
+        text.to_string()
+    } else {
+        chars[chars.len() - width..].iter().collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,5 +89,17 @@ mod tests {
         let inner = centered_fixed_rect(50, 10, outer);
         assert_eq!(inner.width, 20);
         assert_eq!(inner.height, 5);
+    }
+
+    #[test]
+    fn scroll_tail_returns_text_unchanged_when_it_fits() {
+        assert_eq!(scroll_tail("abc", 5), "abc");
+        assert_eq!(scroll_tail("abc", 3), "abc");
+    }
+
+    #[test]
+    fn scroll_tail_keeps_only_the_end_when_overflowing() {
+        assert_eq!(scroll_tail("abcdef", 3), "def");
+        assert_eq!(scroll_tail("abcdef█", 4), "def█");
     }
 }

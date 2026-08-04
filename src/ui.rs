@@ -11,7 +11,7 @@ use std::{io, time::{Duration, Instant}};
 
 use crate::app::{App, ContextAction, TextSelection};
 use crate::backend::BackendKind;
-use crate::util::centered_fixed_rect;
+use crate::util::{centered_fixed_rect, scroll_tail};
 use crate::AppMode;
 
 /// Distância máxima (em tempo) entre dois cliques no mesmo item para que
@@ -49,6 +49,14 @@ fn process_event(app: &mut App, event: Event) -> bool {
                     return false;
                 } else if key.code == KeyCode::Char('c') {
                     return true;
+                } else if app.mode == AppMode::Form && app.form_active_field == 0 {
+                    // No campo Grupo (um "insert mode": j/k digitariam letras),
+                    // CTRL+N/CTRL+P navegam a dropdown de sugestões.
+                    match key.code {
+                        KeyCode::Char('n') => { app.form_next_group(); return false; }
+                        KeyCode::Char('p') => { app.form_prev_group(); return false; }
+                        _ => {}
+                    }
                 }
             }
 
@@ -83,6 +91,10 @@ fn handle_ctrl_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Char('d') => app.half_page_down(),
         KeyCode::Char('u') => app.half_page_up(),
+        // Alias de navegação (estilo readline/emacs) pra quando o modo de
+        // busca está ativo e j/k digitariam letras em vez de navegar.
+        KeyCode::Char('n') => app.next(),
+        KeyCode::Char('p') => app.previous(),
         KeyCode::Char('a') => app.open_add_form(),
         KeyCode::Char('e') => app.edit_selected(),
         KeyCode::Char('x') => {
@@ -126,7 +138,7 @@ fn handle_normal_key(app: &mut App, code: KeyCode, is_g_key: &mut bool) -> bool 
         KeyCode::Enter => app.copy_password(),
         KeyCode::Tab => app.open_info_modal(),
         KeyCode::Char(' ') => app.open_context_menu(),
-        KeyCode::Char('/') | KeyCode::Char('f') => app.mode = AppMode::Search,
+        KeyCode::Char('/') | KeyCode::Char('f') | KeyCode::Char('i') => app.mode = AppMode::Search,
         KeyCode::Char('G') => app.go_to_bottom(),
         KeyCode::Char('g') => {
             *is_g_key = true;
@@ -474,6 +486,7 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
     app.search_rect = chunks[0];
 
     let (search_text, search_color) = if app.mode == AppMode::Search { (format!(" {}█ ", app.search_query), app.theme.annotation) } else { (format!(" {} ", app.search_query), app.theme.guidance) };
+    let search_text = scroll_tail(&search_text, chunks[0].width.saturating_sub(2) as usize);
     f.render_widget(Paragraph::new(search_text).block(Block::default().title(" Pesquisar (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
 
     let list_title = if app.mode == AppMode::Normal { " NORMAL (j/k) " } else { " PESQUISA " };
@@ -529,7 +542,8 @@ fn draw_rename_group_modal(f: &mut Frame, app: &mut App) {
         Constraint::Length(1), // Footer ajuda
     ]).split(inner);
 
-    f.render_widget(Paragraph::new(format!(" {}█", app.rename_group_title)).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(app.theme.annotation))), chunks[0]);
+    let title_text = scroll_tail(&format!(" {}█", app.rename_group_title), chunks[0].width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(title_text).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(app.theme.annotation))), chunks[0]);
     f.render_widget(Paragraph::new("ENTER: Renomear | ESC: Cancelar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[1]);
 }
 
@@ -569,14 +583,18 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
     draw_form_group_field(f, app, group_rect, show_dropdown);
 
     let title_color = if app.form_active_field == 1 { app.theme.annotation } else { app.theme.base };
-    f.render_widget(Paragraph::new(format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" })).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
+    let title_text = scroll_tail(&format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" }), form_chunks[2].width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(title_text).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
     let user_color = if app.form_active_field == 2 { app.theme.annotation } else { app.theme.base };
-    f.render_widget(Paragraph::new(format!(" {}{}", app.form_username, if app.form_active_field == 2 { "█" } else { "" })).block(Block::default().title(" Usuário ").borders(Borders::ALL).style(Style::default().fg(user_color))), form_chunks[3]);
+    let user_text = scroll_tail(&format!(" {}{}", app.form_username, if app.form_active_field == 2 { "█" } else { "" }), form_chunks[3].width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(user_text).block(Block::default().title(" Usuário ").borders(Borders::ALL).style(Style::default().fg(user_color))), form_chunks[3]);
     let pass_color = if app.form_active_field == 3 { app.theme.annotation } else { app.theme.base };
     let hidden: String = app.form_password.chars().map(|_| '*').collect();
-    f.render_widget(Paragraph::new(format!(" {}{}", hidden, if app.form_active_field == 3 { "█" } else { "" })).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[4]);
+    let pass_text = scroll_tail(&format!(" {}{}", hidden, if app.form_active_field == 3 { "█" } else { "" }), form_chunks[4].width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(pass_text).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[4]);
     let url_color = if app.form_active_field == 4 { app.theme.annotation } else { app.theme.base };
-    f.render_widget(Paragraph::new(format!(" {}{}", app.form_url, if app.form_active_field == 4 { "█" } else { "" })).block(Block::default().title(" URL ").borders(Borders::ALL).style(Style::default().fg(url_color))), form_chunks[5]);
+    let url_text = scroll_tail(&format!(" {}{}", app.form_url, if app.form_active_field == 4 { "█" } else { "" }), form_chunks[5].width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(url_text).block(Block::default().title(" URL ").borders(Borders::ALL).style(Style::default().fg(url_color))), form_chunks[5]);
 
     let notes_color = if app.form_active_field == 5 { app.theme.annotation } else { app.theme.base };
     let notes_block = Block::default().title(" Notas ").borders(Borders::ALL).border_style(Style::default().fg(notes_color));
@@ -624,11 +642,13 @@ fn draw_form_modal_pass(f: &mut Frame, app: &mut App, show_dropdown: bool) {
     draw_form_group_field(f, app, group_rect, show_dropdown);
 
     let title_color = if app.form_active_field == 1 { app.theme.annotation } else { app.theme.base };
-    f.render_widget(Paragraph::new(format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" })).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
+    let title_text = scroll_tail(&format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" }), form_chunks[2].width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(title_text).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
 
     let pass_color = if app.form_active_field == 2 { app.theme.annotation } else { app.theme.base };
     let hidden: String = app.form_password.chars().map(|_| '*').collect();
-    f.render_widget(Paragraph::new(format!(" {}{}", hidden, if app.form_active_field == 2 { "█" } else { "" })).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[3]);
+    let pass_text = scroll_tail(&format!(" {}{}", hidden, if app.form_active_field == 2 { "█" } else { "" }), form_chunks[3].width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(pass_text).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[3]);
 
     f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[5]);
 }
@@ -636,7 +656,8 @@ fn draw_form_modal_pass(f: &mut Frame, app: &mut App, show_dropdown: bool) {
 fn draw_form_group_field(f: &mut Frame, app: &mut App, group_rect: Rect, show_dropdown: bool) {
     let group_block = Block::default().title(" Grupo ").borders(Borders::ALL).border_style(Style::default().fg(if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base }));
     f.render_widget(group_block, group_rect);
-    f.render_widget(Paragraph::new(format!(" {}{}", app.form_group, if app.form_active_field == 0 { "█" } else { "" })), Rect::new(group_rect.x + 1, group_rect.y + 1, group_rect.width - 2, 1));
+    let group_text = scroll_tail(&format!(" {}{}", app.form_group, if app.form_active_field == 0 { "█" } else { "" }), group_rect.width.saturating_sub(2) as usize);
+    f.render_widget(Paragraph::new(group_text), Rect::new(group_rect.x + 1, group_rect.y + 1, group_rect.width - 2, 1));
 
     if show_dropdown {
         let items: Vec<ListItem> = app.filtered_groups.iter().map(|g| ListItem::new(g.as_str())).collect();
@@ -786,6 +807,7 @@ fn draw_help_modal(f: &mut Frame, app: &mut App) {
             ("j/k, ↑/↓", "Mover seleção"),
             ("gg / G", "Ir para o topo / fim"),
             ("CTRL-U/D", "Meia página"),
+            ("CTRL-N/P", "Próximo/anterior (busca e dropdowns)"),
         ]),
         ("AÇÕES", &[
             ("ENTER", "Copiar senha"),
@@ -796,7 +818,7 @@ fn draw_help_modal(f: &mut Frame, app: &mut App) {
             ("CTRL-X", "Excluir entrada"),
         ]),
         ("BUSCA", &[
-            ("/ ou f", "Entrar em modo de busca"),
+            ("/, f ou i", "Entrar em modo de busca"),
             ("ESC", "Sair da busca / Fechar modal"),
         ]),
         ("MOUSE", &[

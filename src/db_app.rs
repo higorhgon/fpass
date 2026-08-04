@@ -19,7 +19,7 @@ use crate::backend::{Backend, BackendKind, DbRef};
 use crate::config::Theme;
 use crate::keepass;
 use crate::pass;
-use crate::util::centered_fixed_rect;
+use crate::util::{centered_fixed_rect, scroll_tail};
 use crate::AppMode;
 
 pub struct DbApp {
@@ -222,6 +222,23 @@ pub fn run_selection_tui(dbs: Vec<DbRef>, theme: Theme) -> Result<Option<Backend
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     match key.code {
                         KeyCode::Char('d') => app.half_page_down(), KeyCode::Char('u') => app.half_page_up(), KeyCode::Char('c') => break None,
+                        // Alias de navegação (estilo readline/emacs): útil no modo de
+                        // busca (j/k digitariam letras) e nas dropdowns de sugestão, que
+                        // são campos de texto — não dá pra usar j/k ali também.
+                        KeyCode::Char('n') => match app.mode {
+                            AppMode::Search | AppMode::Normal => app.next(),
+                            AppMode::CreatePassStore => {
+                                if app.create_pass_active_field == 0 { app.create_pass_dir_next(); } else { app.create_pass_key_next(); }
+                            }
+                            _ => {}
+                        },
+                        KeyCode::Char('p') => match app.mode {
+                            AppMode::Search | AppMode::Normal => app.previous(),
+                            AppMode::CreatePassStore => {
+                                if app.create_pass_active_field == 0 { app.create_pass_dir_prev(); } else { app.create_pass_key_prev(); }
+                            }
+                            _ => {}
+                        },
                         KeyCode::Char('a') => {
                             if app.mode == AppMode::Normal || app.mode == AppMode::Search {
                                 app.open_choose_db_type();
@@ -343,7 +360,7 @@ pub fn run_selection_tui(dbs: Vec<DbRef>, theme: Theme) -> Result<Option<Backend
                         KeyCode::Backspace => { app.search_query.pop(); app.apply_filter(); } KeyCode::Char(c) => { app.search_query.push(c); app.apply_filter(); } _ => {}
                     },
                     AppMode::Normal => match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break None, KeyCode::Down | KeyCode::Char('j') => app.next(), KeyCode::Up | KeyCode::Char('k') => app.previous(), KeyCode::Char('/') | KeyCode::Char('f') => app.mode = AppMode::Search, KeyCode::Char('G') => app.go_to_bottom(),
+                        KeyCode::Char('q') | KeyCode::Esc => break None, KeyCode::Down | KeyCode::Char('j') => app.next(), KeyCode::Up | KeyCode::Char('k') => app.previous(), KeyCode::Char('/') | KeyCode::Char('f') | KeyCode::Char('i') => app.mode = AppMode::Search, KeyCode::Char('G') => app.go_to_bottom(),
                         KeyCode::Char('g') => { is_g_key = true; if app.last_key_was_g { app.go_to_top(); is_g_key = false; } }
                         KeyCode::Enter => { if let Some(i) = app.list_state.selected() { app.selected_db = Some(app.filtered[i].clone()); app.mode = AppMode::PasswordInput; } }, _ => {}
                     },
@@ -365,6 +382,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
     app.list_height = chunks[1].height as usize;
 
     let (search_text, search_color) = if app.mode == AppMode::Search { (format!(" {}█ ", app.search_query), app.theme.annotation) } else { (format!(" {} ", app.search_query), app.theme.guidance) };
+    let search_text = scroll_tail(&search_text, chunks[0].width.saturating_sub(2) as usize);
     f.render_widget(Paragraph::new(search_text).block(Block::default().title(" Filtrar Banco (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
 
     let list_color = if app.mode == AppMode::Normal { app.theme.title } else { app.theme.base };
@@ -421,7 +439,8 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let hidden_pw: String = app.password_input.chars().map(|_| '*').collect();
         let input_border_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.title };
 
-        let input_field = Paragraph::new(format!(" {}{}", hidden_pw, "█"))
+        let input_text = scroll_tail(&format!(" {}█", hidden_pw), input_chunks[1].width.saturating_sub(2) as usize);
+        let input_field = Paragraph::new(input_text)
             .block(Block::default().borders(Borders::ALL).style(Style::default().fg(input_border_color)));
 
         f.render_widget(input_field, input_chunks[1]);
@@ -457,13 +476,15 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         ]).split(inner_area);
 
         let name_color = if app.create_db_active_field == 0 { app.theme.annotation } else { app.theme.base };
-        let name_field = Paragraph::new(format!(" {}{}", app.new_db_name, if app.create_db_active_field == 0 { "█" } else { "" }))
+        let name_text = scroll_tail(&format!(" {}{}", app.new_db_name, if app.create_db_active_field == 0 { "█" } else { "" }), chunks[0].width.saturating_sub(2) as usize);
+        let name_field = Paragraph::new(name_text)
             .block(Block::default().title(" Nome do Arquivo ").borders(Borders::ALL).style(Style::default().fg(name_color)));
         f.render_widget(name_field, chunks[0]);
 
         let pass_color = if app.create_db_active_field == 1 { app.theme.annotation } else { app.theme.base };
         let hidden_pw: String = app.new_db_password.chars().map(|_| '*').collect();
-        let pass_field = Paragraph::new(format!(" {}{}", hidden_pw, if app.create_db_active_field == 1 { "█" } else { "" }))
+        let pass_text = scroll_tail(&format!(" {}{}", hidden_pw, if app.create_db_active_field == 1 { "█" } else { "" }), chunks[1].width.saturating_sub(2) as usize);
+        let pass_field = Paragraph::new(pass_text)
             .block(Block::default().title(" Senha do Banco ").borders(Borders::ALL).style(Style::default().fg(pass_color)));
         f.render_widget(pass_field, chunks[1]);
 
@@ -520,7 +541,9 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let dir_color = if app.create_pass_active_field == 0 { app.theme.annotation } else { app.theme.base };
         let dir_block = Block::default().title(" Diretório ").borders(Borders::ALL).border_style(Style::default().fg(dir_color));
         f.render_widget(dir_block, dir_rect);
-        f.render_widget(Paragraph::new(format!(" {}{}", app.create_pass_dir, if app.create_pass_active_field == 0 { "█" } else { "" })), Rect::new(dir_rect.x + 1, dir_rect.y + 1, dir_rect.width.saturating_sub(2), 1));
+        let dir_width = dir_rect.width.saturating_sub(2) as usize;
+        let dir_text = scroll_tail(&format!(" {}{}", app.create_pass_dir, if app.create_pass_active_field == 0 { "█" } else { "" }), dir_width);
+        f.render_widget(Paragraph::new(dir_text), Rect::new(dir_rect.x + 1, dir_rect.y + 1, dir_rect.width.saturating_sub(2), 1));
 
         if show_dir_dropdown {
             let items: Vec<ListItem> = app.create_pass_dir_suggestions.iter().map(|s| {
@@ -565,13 +588,14 @@ fn draw_help_modal(f: &mut Frame, app: &mut DbApp) {
             ("j/k, ↑/↓", "Mover seleção"),
             ("gg / G", "Ir para o topo / fim"),
             ("CTRL-U/D", "Meia página"),
+            ("CTRL-N/P", "Próximo/anterior (busca e dropdowns)"),
         ]),
         ("AÇÕES", &[
             ("ENTER", "Selecionar banco"),
             ("CTRL-A", "Criar novo banco"),
         ]),
         ("BUSCA", &[
-            ("/ ou f", "Entrar em modo de busca"),
+            ("/, f ou i", "Entrar em modo de busca"),
             ("ESC", "Sair da busca / Cancelar"),
         ]),
         ("GERAL", &[
