@@ -429,31 +429,28 @@ struct FooterContent {
     color: Color,
 }
 
-/// Decide o que mostrar na área de dicas: uma mensagem de sucesso ativa
-/// (com contagem regressiva de limpeza do clipboard, se aplicável) ou, na
-/// ausência dela, as dicas de atalhos do modo atual. Mensagens de erro não
-/// passam por aqui — continuam em um modal centralizado.
+/// Decide o que mostrar na área de dicas: uma mensagem ativa (sucesso ou
+/// erro, essa em vermelho — com contagem regressiva de limpeza do
+/// clipboard quando aplicável) ou, na ausência dela, as dicas de atalhos
+/// do modo atual.
 fn build_footer_content(app: &mut App, hint_text: &str, width: usize) -> FooterContent {
     let mut active: Option<(String, Color)> = None;
 
     if let Some(msg) = app.message.clone() {
-        if msg.is_error {
-            // Mensagens de erro são tratadas por draw_message_toast.
+        let elapsed = msg.time.elapsed();
+        let expired = match msg.clipboard_clear_secs {
+            Some(secs) => elapsed.as_secs() >= secs,
+            None => elapsed >= Duration::from_secs(3),
+        };
+        if expired {
+            app.message = None;
         } else {
-            let elapsed = msg.time.elapsed();
-            let expired = match msg.clipboard_clear_secs {
-                Some(secs) => elapsed.as_secs() >= secs,
-                None => elapsed >= Duration::from_secs(3),
+            let text = match msg.clipboard_clear_secs {
+                Some(secs) => format!("{} (limpo do clipboard em {}s)", msg.text, secs.saturating_sub(elapsed.as_secs())),
+                None => msg.text,
             };
-            if expired {
-                app.message = None;
-            } else {
-                let text = match msg.clipboard_clear_secs {
-                    Some(secs) => format!("{} (limpo do clipboard em {}s)", msg.text, secs.saturating_sub(elapsed.as_secs())),
-                    None => msg.text,
-                };
-                active = Some((text, app.theme.alert_info));
-            }
+            let color = if msg.is_error { app.theme.alert_error } else { app.theme.alert_info };
+            active = Some((text, color));
         }
     }
 
@@ -509,8 +506,6 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
         AppMode::RenameGroup => draw_rename_group_modal(f, app),
         _ => {}
     }
-
-    draw_message_toast(f, app);
 }
 
 fn draw_confirm_delete_modal(f: &mut Frame, app: &mut App) {
@@ -782,24 +777,6 @@ fn draw_context_menu(f: &mut Frame, app: &mut App) {
             Style::default().fg(app.theme.base)
         };
         f.render_widget(Paragraph::new(format!(" {}", label)).style(style), row);
-    }
-}
-
-/// Mensagens de sucesso são exibidas na área de dicas (ver `build_footer_content`);
-/// apenas erros continuam aparecendo neste modal centralizado, já que exigem
-/// mais atenção do usuário.
-fn draw_message_toast(f: &mut Frame, app: &mut App) {
-    if let Some(msg) = &app.message {
-        if !msg.is_error {
-            return;
-        }
-        if msg.time.elapsed() < Duration::from_secs(3) {
-            let area = centered_fixed_rect(50, 5, f.size());
-            f.render_widget(Clear, area);
-            f.render_widget(Paragraph::new(format!("\n{}", msg.text)).block(Block::default().title(" Erro ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_error))).alignment(Alignment::Center), area);
-        } else {
-            app.message = None;
-        }
     }
 }
 
