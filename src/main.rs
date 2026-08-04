@@ -4,6 +4,7 @@ mod clipboard;
 mod config;
 mod db_app;
 mod history;
+mod kdbx2pass;
 mod keepass;
 mod pass;
 mod ui;
@@ -49,9 +50,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("fpass - Gerenciador de senhas TUI para KeePassXC e pass");
                 println!("\nUso:");
                 println!("  fpass [opções]");
+                println!("  fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]");
                 println!("\nOpções:");
-                println!("  -v, --version    Exibe a versão do programa");
-                println!("  -h, --help       Exibe esta mensagem de ajuda");
+                println!("  -v, --version      Exibe a versão do programa");
+                println!("  -h, --help         Exibe esta mensagem de ajuda");
+                println!("  --kdbx2pass        Importa um banco KeePassXC para um password-store");
+                println!("                     do pass, encriptado para os KEYIDs informados");
+                return Ok(());
+            }
+            "--kdbx2pass" => {
+                if args.len() < 4 {
+                    eprintln!("Uso: fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]");
+                    std::process::exit(1);
+                }
+                if let Err(e) = kdbx2pass::run(&args[2], &args[3..]) {
+                    eprintln!("fpass --kdbx2pass: {}", e);
+                    std::process::exit(1);
+                }
                 return Ok(());
             }
             _ => {}

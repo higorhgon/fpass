@@ -97,6 +97,14 @@ gpg-connect-agent reloadagent /bye
 
 > **Nota:** no pass, o fpass só expõe **Título** e **Senha** no formulário de adicionar/editar — o formato do pass é bem menos estruturado que o do KeePassXC. Campos como usuário/URL/notas de uma entrada já existente são preservados ao editá-la, mesmo sem aparecer no formulário.
 
+### Migrando um banco KeePassXC para o pass
+
+```bash
+fpass --kdbx2pass banco.kdbx KEYID1 [KEYID2...]
+```
+
+Inicializa (ou reaponta) o password-store padrão para os `KEYID`s informados e importa cada entrada do `.kdbx`, pedindo a senha mestra uma única vez. Username/URL/Notas viram metadados nas linhas seguintes à senha, no formato convencional do pass; nada é gravado em disco em texto puro durante o processo.
+
 ## Configuração
 
 Arquivos em `~/.config/fpass/`:
