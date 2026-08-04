@@ -240,6 +240,9 @@ impl PassStore {
     }
 
     /// Limpa o cache do gpg-agent para forçar verificação real da passphrase.
+    /// `RELOADAGENT` afeta o agente inteiro (todas as chaves em cache, não só
+    /// a usada aqui), então outras ferramentas que dependam do mesmo
+    /// gpg-agent também perdem o cache nesse instante.
     fn clear_agent_cache() {
         let _ = Command::new("gpg-connect-agent")
             .args(["RELOADAGENT", "/bye"])

@@ -4,11 +4,15 @@
 //! Porta do antigo `kdbx2pass.sh` (bash + python) para Rust: nenhum arquivo
 //! temporário é escrito em disco (o CSV exportado — que contém todas as
 //! senhas em texto puro — fica só em memória, em `Zeroizing<String>`, ao
-//! invés do `mktemp` + `shred` do script original).
+//! invés do `mktemp` + `shred` do script original). O CSV é então quebrado
+//! em `Vec<Vec<String>>` (não `Zeroizing`) pra facilitar o parse; a coluna
+//! de senha de cada linha é zerada manualmente logo depois de extraída
+//! (ver `run`), então nenhuma senha sobrevive além do tempo de processar
+//! sua própria entrada.
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 /// Nomes de grupo raiz que o KeePassXC usa/gera (varia por versão/locale —
 /// instalações em pt-BR chamam o grupo raiz de "Senhas"); entradas nesses
@@ -34,10 +38,11 @@ pub fn run(db_path: &str, recipients: &[String]) -> Result<(), String> {
     let csv = export_kdbx_csv(db_path, &password)?;
 
     // 3. Faz o parse e importa cada entrada.
-    let rows = parse_csv(&csv);
-    let Some((header, entries)) = rows.split_first() else {
+    let mut rows = parse_csv(&csv);
+    if rows.is_empty() {
         return Err("CSV exportado está vazio.".to_string());
-    };
+    }
+    let header = rows.remove(0);
     let col = |name: &str| header.iter().position(|h| h == name);
     let idx_group = col("Group");
     let idx_title = col("Title");
@@ -47,13 +52,19 @@ pub fn run(db_path: &str, recipients: &[String]) -> Result<(), String> {
     let idx_notes = col("Notes");
     let get = |row: &[String], idx: Option<usize>| -> String { idx.and_then(|i| row.get(i)).cloned().unwrap_or_default() };
 
-    for row in entries {
+    for row in rows.iter_mut() {
         let raw_group = get(row, idx_group);
         let raw_group = raw_group.trim_matches('/').replace("/./", "/");
         let title = get(row, idx_title);
         let title = if title.trim().is_empty() { "sem-titulo".to_string() } else { title.trim().to_string() };
         let username = get(row, idx_username);
         let entry_password = Zeroizing::new(get(row, idx_password));
+        // A cópia em texto puro dentro de `row` já foi extraída acima;
+        // zera na hora pra não deixar a senha sobrevivendo em memória não
+        // protegida pelo resto da importação (`rows` só é dropado no fim).
+        if let Some(i) = idx_password {
+            if let Some(cell) = row.get_mut(i) { cell.zeroize(); }
+        }
         let url = get(row, idx_url);
         let notes = get(row, idx_notes);
 

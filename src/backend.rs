@@ -243,16 +243,28 @@ impl Backend {
                 let (entries, groups) = self.list();
                 let old_prefix = format!("{}/", old_group);
 
+                // Cada etapa é checada e interrompe a operação no primeiro
+                // erro: como isso é multi-passo (mkdir/mv em sequência), uma
+                // falha no meio deixaria a árvore de grupos pela metade se
+                // fosse ignorada silenciosamente.
+                let mkdir = |path: &str| -> Result<(), String> {
+                    let r = run_kpcli(&["mkdir", "-q", db_path, path], &[password.as_str()])?;
+                    if r.success { Ok(()) } else { Err(r.stderr) }
+                };
+                let mv = |src: &str, dest_group: &str| -> Result<(), String> {
+                    let r = run_kpcli(&["mv", "-q", db_path, src, dest_group], &[password.as_str()])?;
+                    if r.success { Ok(()) } else { Err(r.stderr) }
+                };
+
                 // Sempre cria o grupo novo, mesmo se `old_group` não tiver
                 // nenhum filho — senão um grupo vazio "some" em vez de ser
                 // renomeado (mkdir/mv abaixo só criam destinos para conteúdo
                 // que de fato existir dentro de `old_group`).
-                let _ = run_kpcli(&["mkdir", "-q", db_path, &new_group], &[password.as_str()]);
+                mkdir(&new_group)?;
 
                 for g in &groups {
                     if let Some(rel) = g.strip_prefix(&old_prefix) {
-                        let dest = format!("{}/{}", new_group, rel);
-                        let _ = run_kpcli(&["mkdir", "-q", db_path, &dest], &[password.as_str()]);
+                        mkdir(&format!("{}/{}", new_group, rel))?;
                     }
                 }
                 for e in &entries {
@@ -262,14 +274,15 @@ impl Backend {
                         Some(idx) => format!("{}/{}", new_group, &rel[..idx]),
                         None => new_group.clone(),
                     };
-                    let _ = run_kpcli(&["mkdir", "-q", db_path, &dest_group], &[password.as_str()]);
-                    let _ = run_kpcli(&["mv", "-q", db_path, e, &dest_group], &[password.as_str()]);
+                    mkdir(&dest_group)?;
+                    mv(e, &dest_group)?;
                 }
 
                 let mut old_tree: Vec<&String> = groups.iter().filter(|g| *g == old_group || g.starts_with(&old_prefix)).collect();
                 old_tree.sort_by_key(|g| std::cmp::Reverse(g.len()));
                 for g in old_tree {
-                    let _ = run_kpcli(&["rmdir", "-q", db_path, g], &[password.as_str()]);
+                    let r = run_kpcli(&["rmdir", "-q", db_path, g], &[password.as_str()])?;
+                    if !r.success { return Err(r.stderr); }
                 }
                 Ok(())
             }

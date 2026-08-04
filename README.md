@@ -1,5 +1,7 @@
 # fpass
 
+[![CI](https://github.com/higorhgon/fpass/actions/workflows/ci.yml/badge.svg)](https://github.com/higorhgon/fpass/actions/workflows/ci.yml)
+
 Gerenciador de senhas com interface TUI (Terminal User Interface), escrito em Rust. Suporta dois backends: **KeePassXC** (.kdbx, via `keepassxc-cli`) e **pass** — the standard unix password manager (via `gpg`).
 
 ## Funcionalidades
@@ -104,6 +106,11 @@ fpass --kdbx2pass banco.kdbx KEYID1 [KEYID2...]
 ```
 
 Inicializa (ou reaponta) o password-store padrão para os `KEYID`s informados e importa cada entrada do `.kdbx`, pedindo a senha mestra uma única vez. Username/URL/Notas viram metadados nas linhas seguintes à senha, no formato convencional do pass; nada é gravado em disco em texto puro durante o processo.
+
+## Segurança
+
+- **Backend KeePassXC**: a senha da entrada é sempre passada ao `keepassxc-cli` via stdin, mas `keepassxc-cli` não aceita usuário/URL/notas por stdin — esses campos vão como argumentos (`-u`, `--url`, `--notes`) em `add`/`edit`. Isso é uma limitação do `keepassxc-cli`, não do fpass: durante a execução do processo, outro usuário local com acesso a `/proc/<pid>/cmdline` (ou `ps aux`) pode ler esses valores. A senha em si nunca passa por argv. O backend **pass** não tem essa limitação — toda a entrada (senha e metadados) é enviada por stdin ao `gpg`/`pass insert`.
+- **`~/.config/fpass/history`** guarda só hashes (com sal em `.history_key`, 0600) e timestamps de uso, nunca o conteúdo das entradas — mas ainda revela para outro usuário local com acesso ao arquivo quantas entradas existem e o padrão de uso.
 
 ## Configuração
 

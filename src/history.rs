@@ -68,6 +68,11 @@ impl History {
     fn save(&self) {
         if !self.enabled { return; }
         if let Ok(mut file) = OpenOptions::new().write(true).create(true).truncate(true).open(&self.file_path) {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = file.set_permissions(fs::Permissions::from_mode(0o600));
+            }
             for (hash, (count, ts)) in &self.records { let _ = writeln!(file, "{}|{}|{}", hash, count, ts); }
         }
     }
