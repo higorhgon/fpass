@@ -45,6 +45,19 @@ pub enum ContextAction {
     Delete,
 }
 
+/// Mensagem de status transitória (sucesso ou erro). Mensagens de sucesso
+/// são exibidas na área de dicas de atalhos (rodapé); mensagens de erro
+/// continuam em um modal centralizado. `clipboard_clear_secs`, quando
+/// presente, faz a UI exibir uma contagem regressiva até a senha ser
+/// apagada do clipboard.
+#[derive(Clone)]
+pub struct StatusMessage {
+    pub text: String,
+    pub time: Instant,
+    pub is_error: bool,
+    pub clipboard_clear_secs: Option<u64>,
+}
+
 pub struct App {
     pub db_path: String,
     pub password: Zeroizing<String>,
@@ -53,7 +66,7 @@ pub struct App {
     pub search_query: String,
     pub list_state: ListState,
     pub mode: AppMode,
-    pub message: Option<(String, Instant, bool)>,
+    pub message: Option<StatusMessage>,
     pub is_mac: bool,
     pub history: History,
     pub last_key_was_g: bool,
@@ -70,6 +83,7 @@ pub struct App {
     pub form_username: String,
     pub form_password: Zeroizing<String>,
     pub form_url: String,
+    pub form_notes: String,
 
     // Retângulos calculados no último desenho da tela, usados para
     // converter cliques/eventos de mouse em posições lógicas da UI.
@@ -103,6 +117,10 @@ pub struct App {
     pub info_notes_scroll: usize,
     pub info_modal_rect: Rect,
     pub info_previous_mode: AppMode,
+
+    // Modal de ajuda com os atalhos de teclado (CTRL+?)
+    pub help_modal_rect: Rect,
+    pub help_previous_mode: AppMode,
 }
 
 impl App {
@@ -113,7 +131,7 @@ impl App {
             all_groups: vec![], filtered_groups: vec![], form_group_state: ListState::default(),
             form_is_edit: false, form_original_path: String::new(), form_active_field: 0,
             form_group: String::new(), form_title: String::new(), form_username: String::new(),
-            form_password: Zeroizing::new(String::new()), form_url: String::new(),
+            form_password: Zeroizing::new(String::new()), form_url: String::new(), form_notes: String::new(),
             term_size: Rect::default(), search_rect: Rect::default(), list_inner_rect: Rect::default(),
             form_rect: Rect::default(), confirm_delete_rect: Rect::default(), last_click: None,
             context_menu_anchor: (0, 0), context_menu_rect: Rect::default(), context_menu_item_rects: vec![],
@@ -122,6 +140,7 @@ impl App {
             info_active_field: 0, info_field_rects: [Rect::default(); 3], info_selection: [TextSelection::default(); 3],
             info_dragging: false, info_drag_field: None, info_notes_scroll: 0, info_modal_rect: Rect::default(),
             info_previous_mode: AppMode::Normal,
+            help_modal_rect: Rect::default(), help_previous_mode: AppMode::Normal,
         };
         app.refresh_entries();
         app
@@ -242,7 +261,7 @@ impl App {
 
     pub fn open_add_form(&mut self) {
         self.form_is_edit = false; self.form_group.clear(); self.form_title.clear(); self.form_username.clear();
-        self.form_password = Zeroizing::new(String::new()); self.form_url.clear(); self.form_active_field = 0; self.mode = AppMode::Form;
+        self.form_password = Zeroizing::new(String::new()); self.form_url.clear(); self.form_notes.clear(); self.form_active_field = 0; self.mode = AppMode::Form;
         self.hover_index = None;
         self.filter_form_groups();
     }
@@ -254,6 +273,7 @@ impl App {
         self.form_username = self.fetch_field(&entry, "UserName");
         self.form_password = Zeroizing::new(self.fetch_field(&entry, "Password"));
         self.form_url = self.fetch_field(&entry, "URL");
+        self.form_notes = self.fetch_field(&entry, "Notes");
         self.form_active_field = 3; self.mode = AppMode::Form; self.hover_index = None; self.filter_form_groups();
     }
 
@@ -327,13 +347,13 @@ impl App {
                 let _ = run_kpcli(&["mv", "-q", &self.db_path, &self.form_original_path, dest_group], &[self.password.as_str()]);
             }
             let result = run_kpcli(
-                &["edit", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, &self.db_path, &path],
+                &["edit", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, "--notes", &self.form_notes, &self.db_path, &path],
                 &[self.password.as_str(), self.form_password.as_str(), self.form_password.as_str()],
             );
             if result.map(|r| r.success).unwrap_or(false) { self.set_msg("Entrada editada com sucesso!", false); } else { self.set_msg("Erro ao editar.", true); }
         } else {
             let result = run_kpcli(
-                &["add", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, &self.db_path, &path],
+                &["add", "-q", "-p", "-u", &self.form_username, "--url", &self.form_url, "--notes", &self.form_notes, &self.db_path, &path],
                 &[self.password.as_str(), self.form_password.as_str(), self.form_password.as_str()],
             );
             if result.map(|r| r.success).unwrap_or(false) { self.history.record_use(&path); self.set_msg("Entrada adicionada!", false); } else { self.set_msg("Erro ao adicionar.", true); }
@@ -348,7 +368,20 @@ impl App {
     pub fn half_page_down(&mut self) { if self.filtered.is_empty() { return; } let step = (self.list_height.saturating_sub(2) / 2).max(1); let i = self.list_state.selected().unwrap_or(0); self.list_state.select(Some((i + step).min(self.filtered.len() - 1))); }
     pub fn half_page_up(&mut self) { if self.filtered.is_empty() { return; } let step = (self.list_height.saturating_sub(2) / 2).max(1); let i = self.list_state.selected().unwrap_or(0); self.list_state.select(Some(i.saturating_sub(step))); }
     pub fn get_selected(&self) -> Option<String> { self.list_state.selected().map(|i| self.filtered[i].clone()) }
-    pub fn set_msg(&mut self, msg: &str, is_error: bool) { self.message = Some((msg.to_string(), Instant::now(), is_error)); }
+    pub fn set_msg(&mut self, msg: &str, is_error: bool) {
+        self.message = Some(StatusMessage { text: msg.to_string(), time: Instant::now(), is_error, clipboard_clear_secs: None });
+    }
+
+    /// Mensagem de sucesso de cópia de senha: a área de dicas exibe uma
+    /// contagem regressiva até o clipboard ser limpo automaticamente.
+    fn set_clipboard_msg(&mut self, msg: &str) {
+        self.message = Some(StatusMessage {
+            text: msg.to_string(),
+            time: Instant::now(),
+            is_error: false,
+            clipboard_clear_secs: Some(keepass::CLIPBOARD_CLEAR_SECS),
+        });
+    }
 
     pub fn copy_password(&mut self) {
         let Some(entry) = self.get_selected() else { return; };
@@ -367,7 +400,7 @@ impl App {
 
         match keepass::copy_to_clipboard(&entry_pass, self.is_mac) {
             Ok(()) => {
-                self.set_msg(&format!("Copiado: {}\n(Limpo do clipboard em 10s)", entry), false);
+                self.set_clipboard_msg(&format!("Copiado: {}", entry));
                 keepass::spawn_clipboard_clearer(entry_pass, self.is_mac);
             }
             Err(_) => self.set_msg("Erro ao copiar senha.", true),

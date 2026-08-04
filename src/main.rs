@@ -28,6 +28,7 @@ pub enum AppMode {
     CreateDb,
     Info,
     ContextMenu,
+    Help,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

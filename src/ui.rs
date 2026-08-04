@@ -62,6 +62,7 @@ fn process_event(app: &mut App, event: Event) -> bool {
                 AppMode::Form => handle_form_key(app, key.code),
                 AppMode::Info => handle_info_key(app, key.code),
                 AppMode::ContextMenu => handle_context_menu_key(app, key.code),
+                AppMode::Help => handle_help_key(app, key.code),
                 AppMode::PasswordInput | AppMode::ConfirmCreateDb | AppMode::CreateDb => {}
             }
             app.last_key_was_g = is_g_key;
@@ -90,6 +91,15 @@ fn handle_ctrl_key(app: &mut App, code: KeyCode) {
                 app.hover_index = None;
                 app.mode = AppMode::ConfirmDelete;
             }
+        }
+        // "CTRL+?" chega de formas diferentes conforme o terminal: sem o
+        // protocolo estendido de teclado, Ctrl+/ e Ctrl+Shift+/ (?) mandam o
+        // mesmo byte 0x1F, que o crossterm decodifica como Char('7')+CONTROL.
+        // Aceitamos as variantes plausíveis para funcionar na maioria dos terminais.
+        KeyCode::Char('?') | KeyCode::Char('/') | KeyCode::Char('7') => {
+            app.help_previous_mode = if app.mode == AppMode::Search { AppMode::Search } else { AppMode::Normal };
+            app.hover_index = None;
+            app.mode = AppMode::Help;
         }
         _ => {}
     }
@@ -167,6 +177,13 @@ fn handle_context_menu_key(app: &mut App, code: KeyCode) {
     }
 }
 
+fn handle_help_key(app: &mut App, code: KeyCode) {
+    match code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.mode = app.help_previous_mode,
+        _ => {}
+    }
+}
+
 fn rect_contains(rect: Rect, column: u16, row: u16) -> bool {
     column >= rect.x && column < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
 }
@@ -235,6 +252,9 @@ fn handle_left_down(app: &mut App, column: u16, row: u16) {
         AppMode::ConfirmDelete => {
             if !rect_contains(app.confirm_delete_rect, column, row) { app.mode = AppMode::Normal; }
         }
+        AppMode::Help => {
+            if !rect_contains(app.help_modal_rect, column, row) { app.mode = app.help_previous_mode; }
+        }
         AppMode::Info => {
             if rect_contains(app.info_modal_rect, column, row) {
                 if let Some(field) = info_field_at(app, column, row) {
@@ -301,14 +321,17 @@ fn handle_right_down(app: &mut App, column: u16, row: u16) {
 fn handle_form_key(app: &mut App, code: KeyCode) {
     match code {
         KeyCode::Esc => app.mode = AppMode::Normal,
-        KeyCode::BackTab => { app.form_active_field = if app.form_active_field == 0 { 4 } else { app.form_active_field - 1 }; }
-        KeyCode::Tab => { app.form_active_field = (app.form_active_field + 1) % 5; }
+        KeyCode::BackTab => { app.form_active_field = if app.form_active_field == 0 { 5 } else { app.form_active_field - 1 }; }
+        KeyCode::Tab => { app.form_active_field = (app.form_active_field + 1) % 6; }
         KeyCode::Down => { if app.form_active_field == 0 { app.form_next_group(); } }
         KeyCode::Up => { if app.form_active_field == 0 { app.form_prev_group(); } }
         KeyCode::Enter => {
             if let Some(idx) = (app.form_active_field == 0).then(|| app.form_group_state.selected()).flatten() {
                 app.form_group = app.filtered_groups[idx].clone();
                 app.form_active_field = 1;
+            } else if app.form_active_field == 5 {
+                // Campo de Notas: ENTER quebra linha em vez de confirmar o formulário.
+                app.form_notes.push('\n');
             } else {
                 app.submit_form();
             }
@@ -319,6 +342,7 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
             2 => { app.form_username.pop(); }
             3 => { app.form_password.pop(); }
             4 => { app.form_url.pop(); }
+            5 => { app.form_notes.pop(); }
             _ => {}
         },
         KeyCode::Char(c) => match app.form_active_field {
@@ -327,6 +351,7 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
             2 => { app.form_username.push(c); }
             3 => { app.form_password.push(c); }
             4 => { app.form_url.push(c); }
+            5 => { app.form_notes.push(c); }
             _ => {}
         },
         _ => {}
@@ -334,9 +359,98 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
 }
 
 /// Texto mínimo de dicas de atalhos exibido na área de rodapé, por modo.
+/// Mantido enxuto de propósito — a lista completa fica no modal de ajuda
+/// (CTRL+?), que é sempre o atalho mais essencial a lembrar.
+fn footer_hint_text(mode: AppMode) -> &'static str {
+    match mode {
+        AppMode::Search => "ENTER: Copiar | TAB: Info | CTRL+?: Ajuda",
+        AppMode::Normal => "ENTER: Copiar | ESPAÇO: Ações | CTRL+?: Ajuda | ESC/q: Sair",
+        AppMode::ConfirmDelete => "y: Sim | n/N: Não",
+        AppMode::Form => "TAB: Navegar | ENTER: Confirmar | ESC: Cancelar",
+        AppMode::Info => "Arraste para copiar | TAB: Alternar | ESC: Fechar",
+        AppMode::ContextMenu => "j/k: Navegar | ENTER: Confirmar | ESC: Fechar",
+        AppMode::Help => "ESC: Fechar",
+        _ => "",
+    }
+}
+
+/// Quebra `text` em linhas de até `max_width` colunas, respeitando quebras
+/// de linha explícitas e quebrando por palavra quando uma linha não cabe.
+fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
+    let max_width = max_width.max(1);
+    let mut lines = Vec::new();
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            lines.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        for word in paragraph.split(' ') {
+            if current.is_empty() {
+                current.push_str(word);
+            } else if current.chars().count() + 1 + word.chars().count() <= max_width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                lines.push(std::mem::take(&mut current));
+                current.push_str(word);
+            }
+        }
+        lines.push(current);
+    }
+    if lines.is_empty() { lines.push(String::new()); }
+    lines
+}
+
+struct FooterContent {
+    lines: Vec<String>,
+    color: Color,
+}
+
+/// Decide o que mostrar na área de dicas: uma mensagem de sucesso ativa
+/// (com contagem regressiva de limpeza do clipboard, se aplicável) ou, na
+/// ausência dela, as dicas de atalhos do modo atual. Mensagens de erro não
+/// passam por aqui — continuam em um modal centralizado.
+fn build_footer_content(app: &mut App, hint_text: &str, width: usize) -> FooterContent {
+    let mut active: Option<(String, Color)> = None;
+
+    if let Some(msg) = app.message.clone() {
+        if msg.is_error {
+            // Mensagens de erro são tratadas por draw_message_toast.
+        } else {
+            let elapsed = msg.time.elapsed();
+            let expired = match msg.clipboard_clear_secs {
+                Some(secs) => elapsed.as_secs() >= secs,
+                None => elapsed >= Duration::from_secs(3),
+            };
+            if expired {
+                app.message = None;
+            } else {
+                let text = match msg.clipboard_clear_secs {
+                    Some(secs) => format!("{} (limpo do clipboard em {}s)", msg.text, secs.saturating_sub(elapsed.as_secs())),
+                    None => msg.text,
+                };
+                active = Some((text, app.theme.alert_info));
+            }
+        }
+    }
+
+    match active {
+        Some((text, color)) => FooterContent { lines: wrap_text(&text, width), color },
+        None => FooterContent { lines: wrap_text(hint_text, width), color: app.theme.guidance },
+    }
+}
+
 fn draw_ui(f: &mut Frame, app: &mut App) {
     app.term_size = f.size();
-    let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(3)]).split(f.size());
+    let full = f.size();
+
+    let hint_text = footer_hint_text(app.mode);
+    let footer_width = full.width.saturating_sub(2) as usize;
+    let footer = build_footer_content(app, hint_text, footer_width);
+    let footer_height = (footer.lines.len() as u16 + 2).max(3).min(full.height);
+
+    let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(footer_height)]).split(full);
     app.list_height = chunks[1].height as usize;
     app.search_rect = chunks[0];
 
@@ -358,24 +472,18 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
     let list = List::new(items).block(list_block).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
-    let footer_text = match app.mode {
-        AppMode::Search => "CTRL-U/D: Meia Pág | ENTER: Copiar | TAB: Info | CTRL-A/E/X: Ações | CTRL+C: Sair",
-        AppMode::Normal => "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | ENTER: Copiar | TAB: Info | ESPAÇO/CTRL-A/E/X: Ações | ESC/q: Sair",
-        AppMode::ConfirmDelete => "y: Sim | n/N: Não | CTRL+C: Sair",
-        AppMode::Form => "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar | ESC: Cancelar",
-        AppMode::Info => "Clique e arraste para copiar | TAB: Alternar campo | ESC: Fechar",
-        AppMode::ContextMenu => "j/k ou ↑/↓: Navegar | ENTER/Clique: Confirmar | ESC: Fechar",
-        _ => "",
-    };
-    if !footer_text.is_empty() {
-        f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
-    }
+    let footer_paragraph = Paragraph::new(footer.lines.join("\n"))
+        .style(Style::default().fg(footer.color))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(footer_paragraph, chunks[2]);
 
     match app.mode {
         AppMode::ConfirmDelete => draw_confirm_delete_modal(f, app),
         AppMode::Form => draw_form_modal(f, app),
         AppMode::Info => draw_info_modal(f, app),
         AppMode::ContextMenu => draw_context_menu(f, app),
+        AppMode::Help => draw_help_modal(f, app),
         _ => {}
     }
 
@@ -391,7 +499,7 @@ fn draw_confirm_delete_modal(f: &mut Frame, app: &mut App) {
 
 fn draw_form_modal(f: &mut Frame, app: &mut App) {
     let show_dropdown = app.form_active_field == 0 && !app.filtered_groups.is_empty();
-    let height = if show_dropdown { 24 } else { 19 };
+    let height = if show_dropdown { 29 } else { 24 };
     let area = centered_fixed_rect(70, height, f.size());
     app.form_rect = area;
     f.render_widget(Clear, area);
@@ -408,6 +516,7 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
         Constraint::Length(3), // Usuário
         Constraint::Length(3), // Senha
         Constraint::Length(3), // URL
+        Constraint::Length(5), // Notas
         Constraint::Length(1), // Espaçador pequeno
         Constraint::Length(1), // Footer ajuda
         Constraint::Min(0)     // Resto (vazio)
@@ -435,7 +544,19 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
     let url_color = if app.form_active_field == 4 { app.theme.annotation } else { app.theme.base };
     f.render_widget(Paragraph::new(format!(" {}{}", app.form_url, if app.form_active_field == 4 { "█" } else { "" })).block(Block::default().title(" URL ").borders(Borders::ALL).style(Style::default().fg(url_color))), form_chunks[5]);
 
-    f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[7]);
+    let notes_color = if app.form_active_field == 5 { app.theme.annotation } else { app.theme.base };
+    let notes_block = Block::default().title(" Notas ").borders(Borders::ALL).border_style(Style::default().fg(notes_color));
+    let notes_inner = notes_block.inner(form_chunks[6]);
+    f.render_widget(notes_block, form_chunks[6]);
+
+    let cursor = if app.form_active_field == 5 { "█" } else { "" };
+    let notes_display = format!("{}{}", app.form_notes, cursor);
+    let wrapped = wrap_text(&notes_display, notes_inner.width as usize);
+    let visible = notes_inner.height as usize;
+    let start = wrapped.len().saturating_sub(visible.max(1));
+    f.render_widget(Paragraph::new(wrapped[start..].join("\n")), notes_inner);
+
+    f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar (Notas: quebra linha)").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[8]);
 }
 
 /// Divide `line` em spans estilizados, invertendo a cor da parte que cai
@@ -546,15 +667,73 @@ fn draw_context_menu(f: &mut Frame, app: &mut App) {
     }
 }
 
+/// Mensagens de sucesso são exibidas na área de dicas (ver `build_footer_content`);
+/// apenas erros continuam aparecendo neste modal centralizado, já que exigem
+/// mais atenção do usuário.
 fn draw_message_toast(f: &mut Frame, app: &mut App) {
-    if let Some((msg, time, is_error)) = &app.message {
-        if time.elapsed() < Duration::from_secs(3) {
+    if let Some(msg) = &app.message {
+        if !msg.is_error {
+            return;
+        }
+        if msg.time.elapsed() < Duration::from_secs(3) {
             let area = centered_fixed_rect(50, 5, f.size());
             f.render_widget(Clear, area);
-            let title = if *is_error { " Erro " } else { " Sucesso " };
-            f.render_widget(Paragraph::new(format!("\n{}", msg)).block(Block::default().title(title).borders(Borders::ALL).style(Style::default().fg(if *is_error { app.theme.alert_error } else { app.theme.alert_info }))).alignment(Alignment::Center), area);
+            f.render_widget(Paragraph::new(format!("\n{}", msg.text)).block(Block::default().title(" Erro ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_error))).alignment(Alignment::Center), area);
         } else {
             app.message = None;
         }
     }
+}
+
+fn draw_help_modal(f: &mut Frame, app: &mut App) {
+    let sections: [(&str, &[(&str, &str)]); 5] = [
+        ("NAVEGAÇÃO", &[
+            ("j/k, ↑/↓", "Mover seleção"),
+            ("gg / G", "Ir para o topo / fim"),
+            ("CTRL-U/D", "Meia página"),
+        ]),
+        ("AÇÕES", &[
+            ("ENTER", "Copiar senha"),
+            ("TAB", "Ver detalhes da entrada"),
+            ("ESPAÇO", "Abrir menu de ações"),
+            ("CTRL-A", "Adicionar entrada"),
+            ("CTRL-E", "Editar entrada"),
+            ("CTRL-X", "Excluir entrada"),
+        ]),
+        ("BUSCA", &[
+            ("/ ou f", "Entrar em modo de busca"),
+            ("ESC", "Sair da busca / Fechar modal"),
+        ]),
+        ("MOUSE", &[
+            ("Clique", "Selecionar entrada"),
+            ("Duplo clique", "Copiar senha"),
+            ("Botão direito", "Menu de ações"),
+        ]),
+        ("GERAL", &[
+            ("CTRL+?", "Esta ajuda"),
+            ("CTRL-C", "Sair do fpass"),
+        ]),
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (title, items) in sections.iter() {
+        if !lines.is_empty() { lines.push(Line::from("")); }
+        lines.push(Line::from(Span::styled(*title, Style::default().fg(app.theme.title).add_modifier(Modifier::BOLD))));
+        for (key, desc) in items.iter() {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {:<16}", key), Style::default().fg(app.theme.annotation)),
+                Span::styled(*desc, Style::default().fg(app.theme.base)),
+            ]));
+        }
+    }
+
+    let height = (lines.len() as u16 + 2).min(f.size().height);
+    let area = centered_fixed_rect(56, height, f.size());
+    app.help_modal_rect = area;
+    f.render_widget(Clear, area);
+
+    let block = Block::default().title(" Atalhos de Teclado ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    f.render_widget(Paragraph::new(lines), inner);
 }

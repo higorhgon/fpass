@@ -121,9 +121,14 @@ fn clear_clipboard(is_mac: bool) {
     }
 }
 
+/// Segundos até a senha ser removida do clipboard após ser copiada. Usado
+/// tanto para agendar a limpeza quanto para exibir a contagem regressiva na
+/// área de dicas da UI.
+pub const CLIPBOARD_CLEAR_SECS: u64 = 10;
+
 pub fn spawn_clipboard_clearer(password: Zeroizing<String>, is_mac: bool) {
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(10));
+        std::thread::sleep(Duration::from_secs(CLIPBOARD_CLEAR_SECS));
         clear_clipboard(is_mac);
         if !is_mac {
             // Fallback para wl-clipboard < 2.2.1 / cliphist sem suporte ao hint

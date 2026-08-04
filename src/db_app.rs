@@ -8,6 +8,7 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Alignment, Constraint, Direction, Layout},
     style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
@@ -34,6 +35,7 @@ pub struct DbApp {
     pub new_db_name: String,
     pub new_db_password: Zeroizing<String>,
     pub create_db_active_field: usize,
+    pub help_previous_mode: AppMode,
 }
 
 impl DbApp {
@@ -45,6 +47,7 @@ impl DbApp {
             list_height: 10, theme,
             password_input: Zeroizing::new(String::new()), selected_db: None, error_msg: None,
             new_db_name: String::new(), new_db_password: Zeroizing::new(String::new()), create_db_active_field: 0,
+            help_previous_mode: AppMode::Normal,
         };
         if !app.filtered.is_empty() { app.list_state.select(Some(0)); }
 
@@ -91,6 +94,15 @@ pub fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(Strin
                                 app.new_db_password = Zeroizing::new(String::new());
                                 app.create_db_active_field = 0;
                                 app.mode = AppMode::CreateDb;
+                            }
+                        }
+                        // "CTRL+?" chega de formas diferentes conforme o terminal: sem o
+                        // protocolo estendido de teclado, Ctrl+/ e Ctrl+Shift+/ (?) mandam o
+                        // mesmo byte 0x1F, que o crossterm decodifica como Char('7')+CONTROL.
+                        KeyCode::Char('?') | KeyCode::Char('/') | KeyCode::Char('7') => {
+                            if app.mode == AppMode::Normal || app.mode == AppMode::Search {
+                                app.help_previous_mode = app.mode;
+                                app.mode = AppMode::Help;
                             }
                         }
                         _ => {}
@@ -171,6 +183,10 @@ pub fn run_selection_tui(dbs: Vec<String>, theme: Theme) -> Result<Option<(Strin
                         KeyCode::Char('g') => { is_g_key = true; if app.last_key_was_g { app.go_to_top(); is_g_key = false; } }
                         KeyCode::Enter => { if let Some(i) = app.list_state.selected() { app.selected_db = Some(app.filtered[i].clone()); app.mode = AppMode::PasswordInput; } }, _ => {}
                     },
+                    AppMode::Help => match key.code {
+                        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.mode = app.help_previous_mode,
+                        _ => {}
+                    },
                     _ => {}
                 }
                 app.last_key_was_g = is_g_key;
@@ -192,12 +208,15 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
     let list = List::new(items).block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
+    // Apenas as dicas essenciais ficam visíveis aqui; a lista completa de
+    // atalhos está no modal de ajuda (CTRL+?).
     let footer_text = match app.mode {
-        AppMode::Search => "CTRL-U/D: Meia Pág | ENTER: Selecionar | ESC: Modo Normal | CTRL+A: Novo | CTRL+C: Sair",
-        AppMode::ConfirmCreateDb => "y: Sim | n/N: Não | CTRL+C: Sair",
-        AppMode::CreateDb => "TAB: Navegar | ENTER: Criar | ESC: Cancelar | CTRL+C: Sair",
-        AppMode::PasswordInput => "ENTER: Confirmar | ESC: Cancelar | CTRL+C: Sair",
-        _ => "gg/G: Topo/Fim | CTRL-U/D: Meia Pág | / ou f: Pesquisar | ENTER: Selecionar | CTRL+A: Novo | ESC/q: Sair",
+        AppMode::Search => "ENTER: Selecionar | CTRL+?: Ajuda | ESC: Normal",
+        AppMode::ConfirmCreateDb => "y: Sim | n/N: Não",
+        AppMode::CreateDb => "TAB: Navegar | ENTER: Criar | ESC: Cancelar",
+        AppMode::PasswordInput => "ENTER: Confirmar | ESC: Cancelar",
+        AppMode::Help => "ESC: Fechar",
+        _ => "ENTER: Selecionar | CTRL+A: Novo | CTRL+?: Ajuda | ESC/q: Sair",
     };
     f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
 
@@ -284,4 +303,51 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         };
         f.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center).style(Style::default().fg(footer_color)), chunks[2]);
     }
+
+    if app.mode == AppMode::Help {
+        draw_help_modal(f, app);
+    }
+}
+
+fn draw_help_modal(f: &mut Frame, app: &mut DbApp) {
+    let sections: [(&str, &[(&str, &str)]); 4] = [
+        ("NAVEGAÇÃO", &[
+            ("j/k, ↑/↓", "Mover seleção"),
+            ("gg / G", "Ir para o topo / fim"),
+            ("CTRL-U/D", "Meia página"),
+        ]),
+        ("AÇÕES", &[
+            ("ENTER", "Selecionar banco"),
+            ("CTRL-A", "Criar novo banco"),
+        ]),
+        ("BUSCA", &[
+            ("/ ou f", "Entrar em modo de busca"),
+            ("ESC", "Sair da busca / Cancelar"),
+        ]),
+        ("GERAL", &[
+            ("CTRL+?", "Esta ajuda"),
+            ("CTRL-C", "Sair do fpass"),
+        ]),
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (title, items) in sections.iter() {
+        if !lines.is_empty() { lines.push(Line::from("")); }
+        lines.push(Line::from(Span::styled(*title, Style::default().fg(app.theme.title).add_modifier(Modifier::BOLD))));
+        for (key, desc) in items.iter() {
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {:<16}", key), Style::default().fg(app.theme.annotation)),
+                Span::styled(*desc, Style::default().fg(app.theme.base)),
+            ]));
+        }
+    }
+
+    let height = (lines.len() as u16 + 2).min(f.size().height);
+    let area = centered_fixed_rect(50, height, f.size());
+    f.render_widget(Clear, area);
+
+    let block = Block::default().title(" Atalhos de Teclado ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    f.render_widget(Paragraph::new(lines), inner);
 }
