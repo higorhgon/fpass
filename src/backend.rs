@@ -3,6 +3,7 @@
 //! ui.rs) fala apenas com `Backend`/`DbRef`, sem repetir a lógica de comandos
 //! de cada gerenciador.
 
+use rust_i18n::t;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use zeroize::Zeroizing;
@@ -14,6 +15,15 @@ use crate::pass::{self, PassStore};
 pub enum BackendKind {
     Keepass,
     Pass,
+}
+
+/// Sufixo usado para marcar grupos vazios na lista de entradas (ex.:
+/// `Trabalho/[vazio]`), pra que apareçam navegáveis/excluíveis mesmo sem
+/// nenhuma entrada real dentro. Traduzido, mas gerado e comparado sempre
+/// pela mesma função — o locale não muda no meio de uma execução — para que
+/// exibição e detecção (`.ends_with(...)`) nunca fiquem fora de sincronia.
+pub fn empty_group_suffix() -> String {
+    format!("/{}", t!("common.empty_group_marker"))
 }
 
 impl BackendKind {
@@ -66,7 +76,7 @@ impl Backend {
                 if result.success {
                     Ok(Backend::Keepass { db_path: db_ref.path.clone(), password: secret })
                 } else {
-                    Err("Senha incorreta!".to_string())
+                    Err(t!("backend.wrong_password").to_string())
                 }
             }
             BackendKind::Pass => {
@@ -93,7 +103,7 @@ impl Backend {
                     for g in &groups {
                         let prefix = format!("{}/", g);
                         let is_empty = !lines.iter().any(|l| l.starts_with(&prefix) && l != &prefix);
-                        if is_empty { entries.push(format!("{}/[vazio]", g)); }
+                        if is_empty { entries.push(format!("{}{}", g, empty_group_suffix())); }
                     }
                 }
                 (entries, groups)
@@ -103,7 +113,7 @@ impl Backend {
                 for g in &groups {
                     let prefix = format!("{}/", g);
                     let has_children = entries.iter().any(|e| e.starts_with(&prefix)) || groups.iter().any(|o| o.starts_with(&prefix));
-                    if !has_children { entries.push(format!("{}/[vazio]", g)); }
+                    if !has_children { entries.push(format!("{}{}", g, empty_group_suffix())); }
                 }
                 (entries, groups)
             }
@@ -268,7 +278,7 @@ impl Backend {
                     }
                 }
                 for e in &entries {
-                    if e.ends_with("/[vazio]") { continue; }
+                    if e.ends_with(&empty_group_suffix()) { continue; }
                     let Some(rel) = e.strip_prefix(&old_prefix) else { continue; };
                     let dest_group = match rel.rfind('/') {
                         Some(idx) => format!("{}/{}", new_group, &rel[..idx]),

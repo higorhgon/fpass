@@ -10,6 +10,11 @@ mod pass;
 mod ui;
 mod util;
 
+#[macro_use]
+extern crate rust_i18n;
+
+i18n!("locales", fallback = "pt-BR");
+
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -39,28 +44,36 @@ pub enum AppMode {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let config_dir = PathBuf::from(format!("{}/.config/fpass", home));
+    fs::create_dir_all(&config_dir).ok();
+    config::ensure_config_exists(&config_dir);
+
+    let (config, theme) = config::setup_and_load_config();
+    rust_i18n::set_locale(&config.language);
+
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
         match args[1].as_str() {
             "-v" | "--version" => {
-                println!("fpass versão {}", env!("CARGO_PKG_VERSION"));
+                println!("{}", t!("cli.version", version = env!("CARGO_PKG_VERSION")));
                 return Ok(());
             }
             "-h" | "--help" => {
-                println!("fpass - Gerenciador de senhas TUI para KeePassXC e pass");
-                println!("\nUso:");
-                println!("  fpass [opções]");
+                println!("{}", t!("cli.help_title"));
+                println!("\n{}", t!("cli.help_usage_header"));
+                println!("{}", t!("cli.help_usage_line"));
                 println!("  fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]");
-                println!("\nOpções:");
-                println!("  -v, --version      Exibe a versão do programa");
-                println!("  -h, --help         Exibe esta mensagem de ajuda");
-                println!("  --kdbx2pass        Importa um banco KeePassXC para um password-store");
-                println!("                     do pass, encriptado para os KEYIDs informados");
+                println!("\n{}", t!("cli.help_options_header"));
+                println!("  -v, --version      {}", t!("cli.help_version"));
+                println!("  -h, --help         {}", t!("cli.help_help"));
+                println!("  --kdbx2pass        {}", t!("cli.help_kdbx2pass_1"));
+                println!("                     {}", t!("cli.help_kdbx2pass_2"));
                 return Ok(());
             }
             "--kdbx2pass" => {
                 if args.len() < 4 {
-                    eprintln!("Uso: fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]");
+                    eprintln!("{}", t!("cli.kdbx2pass_usage"));
                     std::process::exit(1);
                 }
                 if let Err(e) = kdbx2pass::run(&args[2], &args[3..]) {
@@ -75,12 +88,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let is_mac = std::env::consts::OS == "macos";
 
-    let home = std::env::var("HOME").unwrap_or_default();
-    let config_dir = PathBuf::from(format!("{}/.config/fpass", home));
-    fs::create_dir_all(&config_dir).ok();
-    config::ensure_config_exists(&config_dir);
-
-    let (config, theme) = config::setup_and_load_config();
     let mut history = History::new(config.recency_enabled);
 
     let mut dbs = backend::find_databases(&config.search_path);

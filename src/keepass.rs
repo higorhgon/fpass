@@ -1,3 +1,4 @@
+use rust_i18n::t;
 use std::{
     fs,
     io::Write,
@@ -23,7 +24,7 @@ pub fn run_kpcli(args: &[&str], stdin_lines: &[&str]) -> Result<KpOutput, String
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| format!("Não foi possível executar keepassxc-cli: {}", e))?;
+    let mut child = cmd.spawn().map_err(|e| t!("keepass.spawn_error", err = e).to_string())?;
 
     if let Some(mut stdin) = child.stdin.take() {
         for line in stdin_lines {
@@ -34,7 +35,7 @@ pub fn run_kpcli(args: &[&str], stdin_lines: &[&str]) -> Result<KpOutput, String
 
     let output = child
         .wait_with_output()
-        .map_err(|e| format!("Falha ao aguardar keepassxc-cli: {}", e))?;
+        .map_err(|e| t!("keepass.wait_error", err = e).to_string())?;
 
     Ok(KpOutput {
         success: output.status.success(),
@@ -64,16 +65,16 @@ pub fn find_databases(path: &str) -> Vec<String> {
 pub fn create_database(name: &str, password: &str) -> Result<PathBuf, String> {
     let home = std::env::var("HOME").unwrap_or_default();
     let db_dir = PathBuf::from(format!("{}/.config/fpass/databases", home));
-    fs::create_dir_all(&db_dir).map_err(|e| format!("Erro ao criar diretório: {}", e))?;
+    fs::create_dir_all(&db_dir).map_err(|e| t!("keepass.mkdir_error", err = e).to_string())?;
 
     let db_path = db_dir.join(format!("{}.kdbx", name));
     if db_path.exists() {
-        return Err("Arquivo já existe!".to_string());
+        return Err(t!("keepass.file_exists").to_string());
     }
 
     let db_path_str = db_path
         .to_str()
-        .ok_or_else(|| "Caminho do banco contém caracteres inválidos".to_string())?;
+        .ok_or_else(|| t!("keepass.invalid_path").to_string())?;
 
     let result = run_kpcli(&["db-create", "-p", db_path_str], &[password, password])?;
     if result.success {

@@ -5,6 +5,7 @@
 //! - Segredos de entradas trafegam em `Zeroizing<String>` e são zerados no drop.
 //! - Listagem lê o filesystem diretamente (arquivos .gpg), sem decifrar nada.
 
+use rust_i18n::t;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -46,22 +47,22 @@ fn run_pass(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Não foi possível executar 'pass': {}", e))?;
+        .map_err(|e| t!("pass.spawn_error", err = e).to_string())?;
 
     if let Some(data) = stdin_data {
         let mut stdin = child
             .stdin
             .take()
-            .ok_or_else(|| "stdin indisponível".to_string())?;
+            .ok_or_else(|| t!("pass.stdin_unavailable").to_string())?;
         stdin
             .write_all(data)
-            .map_err(|e| format!("Erro escrevendo no pass: {}", e))?;
+            .map_err(|e| t!("pass.stdin_write_error", err = e).to_string())?;
         // stdin é dropado aqui, fechando o pipe.
     }
 
     let output = child
         .wait_with_output()
-        .map_err(|e| format!("Erro aguardando o pass: {}", e))?;
+        .map_err(|e| t!("pass.wait_error", err = e).to_string())?;
 
     if output.status.success() {
         Ok(output)
@@ -103,9 +104,9 @@ pub fn list_secret_keys() -> Vec<(String, String)> {
 /// inofensivo aqui, já que o store recém-criado está vazio).
 pub fn init_store(root: &Path, gpg_id: &str) -> Result<(), String> {
     if root.join(".gpg-id").exists() {
-        return Err(format!("Já existe um password-store em {}.", root.display()));
+        return Err(t!("pass.store_already_exists", path = root.display()).to_string());
     }
-    fs::create_dir_all(root).map_err(|e| format!("Erro criando diretório: {}", e))?;
+    fs::create_dir_all(root).map_err(|e| t!("pass.mkdir_error", err = e).to_string())?;
 
     let output = Command::new("pass")
         .args(["init", gpg_id])
@@ -113,7 +114,7 @@ pub fn init_store(root: &Path, gpg_id: &str) -> Result<(), String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|e| format!("Não foi possível executar 'pass': {}", e))?;
+        .map_err(|e| t!("pass.spawn_error", err = e).to_string())?;
 
     if output.status.success() {
         Ok(())
@@ -127,10 +128,7 @@ impl PassStore {
     /// `.gpg-id` é feita em `backend::find_databases`).
     pub fn open(root: &Path) -> Result<Self, String> {
         if !root.join(".gpg-id").exists() {
-            return Err(format!(
-                "Password store não inicializado em {} — rode: pass init <SEU-GPG-KEY-ID>",
-                root.display()
-            ));
+            return Err(t!("pass.store_not_initialized", path = root.display()).to_string());
         }
         Ok(Self { root: root.to_path_buf() })
     }
@@ -181,7 +179,7 @@ impl PassStore {
     pub fn show_with_passphrase(&self, entry: &str, passphrase: &str) -> Result<EntryData, String> {
         let file_path = self.root.join(format!("{}.gpg", entry));
         if !file_path.exists() {
-            return Err(format!("Arquivo .gpg não encontrado para: {}", entry));
+            return Err(t!("pass.gpg_file_not_found", entry = entry).to_string());
         }
         let file_str = file_path.to_string_lossy();
 
@@ -201,20 +199,20 @@ impl PassStore {
         .stderr(Stdio::piped());
 
         let mut child =
-            cmd.spawn().map_err(|e| format!("Não foi possível executar gpg: {}", e))?;
+            cmd.spawn().map_err(|e| t!("pass.gpg_spawn_error", err = e).to_string())?;
 
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(passphrase.as_bytes())
-                .map_err(|e| format!("Erro enviando passphrase: {}", e))?;
+                .map_err(|e| t!("pass.gpg_passphrase_send_error", err = e).to_string())?;
             stdin
                 .write_all(b"\n")
-                .map_err(|e| format!("Erro enviando passphrase: {}", e))?;
+                .map_err(|e| t!("pass.gpg_passphrase_send_error", err = e).to_string())?;
         }
 
         let output = child
             .wait_with_output()
-            .map_err(|e| format!("Erro aguardando gpg: {}", e))?;
+            .map_err(|e| t!("pass.gpg_wait_error", err = e).to_string())?;
 
         if output.status.success() {
             let content = Zeroizing::new(String::from_utf8_lossy(&output.stdout).into_owned());
@@ -226,13 +224,9 @@ impl PassStore {
                 || err.contains("pinentry")
                 || err.contains("Inappropriate ioctl")
             {
-                Err(format!(
-                    "GPG não configurado para loopback.\n\
-                     Adicione 'allow-loopback-pinentry' em ~/.gnupg/gpg-agent.conf\n\
-                     e recarregue: gpg-connect-agent reloadagent /bye"
-                ))
+                Err(t!("pass.gpg_loopback_not_configured").to_string())
             } else if err.contains("bad passphrase") || err.contains("decryption failed") {
-                Err("Senha GPG incorreta!".to_string())
+                Err(t!("pass.wrong_gpg_password").to_string())
             } else {
                 Err(err.to_string())
             }

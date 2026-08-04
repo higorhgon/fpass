@@ -1,0 +1,427 @@
+_version: 2
+
+cli.version:
+  pt-BR: "fpass versão %{version}"
+  en: "fpass version %{version}"
+cli.help_title:
+  pt-BR: "fpass - Gerenciador de senhas TUI para KeePassXC e pass"
+  en: "fpass - TUI password manager for KeePassXC and pass"
+cli.help_usage_header:
+  pt-BR: "Uso:"
+  en: "Usage:"
+cli.help_usage_line:
+  pt-BR: "  fpass [opções]"
+  en: "  fpass [options]"
+cli.help_options_header:
+  pt-BR: "Opções:"
+  en: "Options:"
+cli.help_version:
+  pt-BR: "Exibe a versão do programa"
+  en: "Show the program version"
+cli.help_help:
+  pt-BR: "Exibe esta mensagem de ajuda"
+  en: "Show this help message"
+cli.help_kdbx2pass_1:
+  pt-BR: "Importa um banco KeePassXC para um password-store"
+  en: "Imports a KeePassXC database into a password-store"
+cli.help_kdbx2pass_2:
+  pt-BR: "do pass, encriptado para os KEYIDs informados"
+  en: "for pass, encrypted for the given KEYIDs"
+cli.kdbx2pass_usage:
+  pt-BR: "Uso: fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]"
+  en: "Usage: fpass --kdbx2pass <database.kdbx> <KEYID1> [KEYID2...]"
+
+app.empty_group:
+  pt-BR: "Isso é um grupo vazio!"
+  en: "That's an empty group!"
+app.copied_to_clipboard:
+  pt-BR: "Copiado para a área de transferência!"
+  en: "Copied to clipboard!"
+app.copy_error:
+  pt-BR: "Erro ao copiar."
+  en: "Error copying."
+app.read_entry_error:
+  pt-BR: "Erro lendo entrada: %{err}"
+  en: "Error reading entry: %{err}"
+app.no_entry_selected:
+  pt-BR: "Nenhuma entrada selecionada."
+  en: "No entry selected."
+app.name_empty:
+  pt-BR: "O nome não pode ser vazio!"
+  en: "Name cannot be empty!"
+app.group_renamed:
+  pt-BR: "Grupo renomeado com sucesso!"
+  en: "Group renamed successfully!"
+app.rename_group_error:
+  pt-BR: "Erro ao renomear grupo: %{err}"
+  en: "Error renaming group: %{err}"
+app.title_empty:
+  pt-BR: "O Título não pode ser vazio!"
+  en: "Title cannot be empty!"
+app.entry_edited:
+  pt-BR: "Entrada editada com sucesso!"
+  en: "Entry edited successfully!"
+app.entry_added:
+  pt-BR: "Entrada adicionada!"
+  en: "Entry added!"
+app.edit_error:
+  pt-BR: "Erro ao editar."
+  en: "Error editing."
+app.add_error:
+  pt-BR: "Erro ao adicionar."
+  en: "Error adding."
+app.copy_password_error:
+  pt-BR: "Erro ao copiar senha."
+  en: "Error copying password."
+app.copied_entry:
+  pt-BR: "Copiado: %{entry}"
+  en: "Copied: %{entry}"
+app.group_deleted:
+  pt-BR: "Grupo excluído!"
+  en: "Group deleted!"
+app.entry_deleted:
+  pt-BR: "Entrada excluída!"
+  en: "Entry deleted!"
+app.delete_error:
+  pt-BR: "Erro ao excluir: %{err}"
+  en: "Error deleting: %{err}"
+
+keepass.spawn_error:
+  pt-BR: "Não foi possível executar keepassxc-cli: %{err}"
+  en: "Could not run keepassxc-cli: %{err}"
+keepass.wait_error:
+  pt-BR: "Falha ao aguardar keepassxc-cli: %{err}"
+  en: "Failed waiting for keepassxc-cli: %{err}"
+keepass.mkdir_error:
+  pt-BR: "Erro ao criar diretório: %{err}"
+  en: "Error creating directory: %{err}"
+keepass.file_exists:
+  pt-BR: "Arquivo já existe!"
+  en: "File already exists!"
+keepass.invalid_path:
+  pt-BR: "Caminho do banco contém caracteres inválidos"
+  en: "Database path contains invalid characters"
+
+pass.spawn_error:
+  pt-BR: "Não foi possível executar 'pass': %{err}"
+  en: "Could not run 'pass': %{err}"
+pass.stdin_unavailable:
+  pt-BR: "stdin indisponível"
+  en: "stdin unavailable"
+pass.stdin_write_error:
+  pt-BR: "Erro escrevendo no pass: %{err}"
+  en: "Error writing to pass: %{err}"
+pass.wait_error:
+  pt-BR: "Erro aguardando o pass: %{err}"
+  en: "Error waiting for pass: %{err}"
+pass.store_already_exists:
+  pt-BR: "Já existe um password-store em %{path}."
+  en: "A password-store already exists at %{path}."
+pass.mkdir_error:
+  pt-BR: "Erro criando diretório: %{err}"
+  en: "Error creating directory: %{err}"
+pass.store_not_initialized:
+  pt-BR: "Password store não inicializado em %{path} — rode: pass init <SEU-GPG-KEY-ID>"
+  en: "Password store not initialized at %{path} — run: pass init <YOUR-GPG-KEY-ID>"
+pass.gpg_file_not_found:
+  pt-BR: "Arquivo .gpg não encontrado para: %{entry}"
+  en: ".gpg file not found for: %{entry}"
+pass.gpg_spawn_error:
+  pt-BR: "Não foi possível executar gpg: %{err}"
+  en: "Could not run gpg: %{err}"
+pass.gpg_passphrase_send_error:
+  pt-BR: "Erro enviando passphrase: %{err}"
+  en: "Error sending passphrase: %{err}"
+pass.gpg_wait_error:
+  pt-BR: "Erro aguardando gpg: %{err}"
+  en: "Error waiting for gpg: %{err}"
+pass.gpg_loopback_not_configured:
+  pt-BR: "GPG não configurado para loopback.\nAdicione 'allow-loopback-pinentry' em ~/.gnupg/gpg-agent.conf\ne recarregue: gpg-connect-agent reloadagent /bye"
+  en: "GPG is not configured for loopback.\nAdd 'allow-loopback-pinentry' to ~/.gnupg/gpg-agent.conf\nand reload: gpg-connect-agent reloadagent /bye"
+pass.wrong_gpg_password:
+  pt-BR: "Senha GPG incorreta!"
+  en: "Wrong GPG password!"
+
+backend.wrong_password:
+  pt-BR: "Senha incorreta!"
+  en: "Wrong password!"
+
+kdbx2pass.master_password_prompt:
+  pt-BR: "Senha mestra de %{db}: "
+  en: "Master password for %{db}: "
+kdbx2pass.read_password_error:
+  pt-BR: "Erro lendo senha: %{err}"
+  en: "Error reading password: %{err}"
+kdbx2pass.empty_csv:
+  pt-BR: "CSV exportado está vazio."
+  en: "Exported CSV is empty."
+kdbx2pass.no_title:
+  pt-BR: "sem-titulo"
+  en: "no-title"
+kdbx2pass.importing:
+  pt-BR: "Importando: %{entry}"
+  en: "Importing: %{entry}"
+kdbx2pass.done:
+  pt-BR: "Conversão concluída. Revise com: pass"
+  en: "Conversion complete. Review with: pass"
+kdbx2pass.pass_cmd_failed:
+  pt-BR: "'pass %{cmd}' falhou"
+  en: "'pass %{cmd}' failed"
+
+# --- Strings compartilhadas entre db_app.rs e ui.rs ---
+common.yes_no_hint:
+  pt-BR: "y: Sim | n/N: Não"
+  en: "y: Yes | n/N: No"
+common.footer_navigate_create:
+  pt-BR: "TAB: Navegar | ENTER: Criar | ESC: Cancelar"
+  en: "TAB: Navigate | ENTER: Create | ESC: Cancel"
+common.footer_create_pass:
+  pt-BR: "TAB: Navegar | ENTER: Completar/Confirmar | ESC: Voltar"
+  en: "TAB: Navigate | ENTER: Complete/Confirm | ESC: Back"
+common.footer_confirm_cancel:
+  pt-BR: "ENTER: Confirmar | ESC: Cancelar"
+  en: "ENTER: Confirm | ESC: Cancel"
+common.footer_close:
+  pt-BR: "ESC: Fechar"
+  en: "ESC: Close"
+common.confirm_title:
+  pt-BR: " Confirmar "
+  en: " Confirm "
+common.shortcuts_title:
+  pt-BR: " Atalhos de Teclado "
+  en: " Keyboard Shortcuts "
+
+help.nav_section:
+  pt-BR: "NAVEGAÇÃO"
+  en: "NAVIGATION"
+help.actions_section:
+  pt-BR: "AÇÕES"
+  en: "ACTIONS"
+help.search_section:
+  pt-BR: "BUSCA"
+  en: "SEARCH"
+help.general_section:
+  pt-BR: "GERAL"
+  en: "GENERAL"
+help.move_selection:
+  pt-BR: "Mover seleção"
+  en: "Move selection"
+help.go_top_bottom:
+  pt-BR: "Ir para o topo / fim"
+  en: "Go to top / bottom"
+help.half_page:
+  pt-BR: "Meia página"
+  en: "Half page"
+help.next_prev:
+  pt-BR: "Próximo/anterior (busca e dropdowns)"
+  en: "Next/previous (search and dropdowns)"
+help.enter_search:
+  pt-BR: "Entrar em modo de busca"
+  en: "Enter search mode"
+help.this_help:
+  pt-BR: "Esta ajuda"
+  en: "This help"
+help.quit_fpass:
+  pt-BR: "Sair do fpass"
+  en: "Quit fpass"
+
+# --- db_app.rs ---
+db_app.no_gpg_key_selected:
+  pt-BR: "Nenhuma chave GPG selecionada. Crie uma com: gpg --full-generate-key"
+  en: "No GPG key selected. Create one with: gpg --full-generate-key"
+db_app.dir_empty:
+  pt-BR: "O diretório não pode ser vazio!"
+  en: "Directory cannot be empty!"
+db_app.filter_title:
+  pt-BR: " Filtrar Banco (/) "
+  en: " Filter Database (/) "
+db_app.available_dbs_title:
+  pt-BR: " Bancos Disponíveis "
+  en: " Available Databases "
+db_app.footer_search:
+  pt-BR: "ENTER: Selecionar | CTRL+?: Ajuda | ESC: Normal"
+  en: "ENTER: Select | CTRL+?: Help | ESC: Normal"
+db_app.footer_choose_type:
+  pt-BR: "j/k: Navegar | ENTER: Confirmar | ESC: Cancelar"
+  en: "j/k: Navigate | ENTER: Confirm | ESC: Cancel"
+db_app.footer_normal:
+  pt-BR: "ENTER: Selecionar | CTRL+A: Novo | CTRL+?: Ajuda | ESC/q: Sair"
+  en: "ENTER: Select | CTRL+A: New | CTRL+?: Help | ESC/q: Quit"
+db_app.unlock_title:
+  pt-BR: " Desbloquear: %{db} "
+  en: " Unlock: %{db} "
+db_app.no_db_found_confirm:
+  pt-BR: "\nNenhum banco de dados encontrado.\nDeseja criar um banco de dados? [y/N]"
+  en: "\nNo database found.\nDo you want to create a database? [y/N]"
+db_app.create_db_title:
+  pt-BR: " Criar Novo Banco de Dados "
+  en: " Create New Database "
+db_app.filename_label:
+  pt-BR: " Nome do Arquivo "
+  en: " File Name "
+db_app.db_password_label:
+  pt-BR: " Senha do Banco "
+  en: " Database Password "
+db_app.new_db_title:
+  pt-BR: " Novo Banco de Dados "
+  en: " New Database "
+db_app.new_pass_store_title:
+  pt-BR: " Novo Password Store (pass) "
+  en: " New Password Store (pass) "
+db_app.dir_label:
+  pt-BR: " Diretório "
+  en: " Directory "
+db_app.gpg_key_label:
+  pt-BR: " Chave GPG "
+  en: " GPG Key "
+db_app.no_gpg_key_found:
+  pt-BR: "Nenhuma chave GPG encontrada.\nCrie uma com: gpg --full-generate-key"
+  en: "No GPG key found.\nCreate one with: gpg --full-generate-key"
+db_app.help_select_db:
+  pt-BR: "Selecionar banco"
+  en: "Select database"
+db_app.help_create_new_db:
+  pt-BR: "Criar novo banco"
+  en: "Create new database"
+db_app.help_exit_search:
+  pt-BR: "Sair da busca / Cancelar"
+  en: "Exit search / Cancel"
+
+# --- ui.rs ---
+ui.footer_search:
+  pt-BR: "ENTER: Copiar | TAB: Info | CTRL+?: Ajuda"
+  en: "ENTER: Copy | TAB: Info | CTRL+?: Help"
+ui.footer_normal:
+  pt-BR: "ENTER: Copiar | ESPAÇO: Ações | CTRL+?: Ajuda | ESC/q: Sair"
+  en: "ENTER: Copy | SPACE: Actions | CTRL+?: Help | ESC/q: Quit"
+ui.footer_form:
+  pt-BR: "TAB: Navegar | ENTER: Confirmar | ESC: Cancelar"
+  en: "TAB: Navigate | ENTER: Confirm | ESC: Cancel"
+ui.footer_info:
+  pt-BR: "Arraste para copiar | TAB: Alternar | ESC: Fechar"
+  en: "Drag to copy | TAB: Switch | ESC: Close"
+ui.footer_context_menu:
+  pt-BR: "j/k: Navegar | ENTER: Confirmar | ESC: Fechar"
+  en: "j/k: Navigate | ENTER: Confirm | ESC: Close"
+ui.footer_rename:
+  pt-BR: "ENTER: Renomear | ESC: Cancelar"
+  en: "ENTER: Rename | ESC: Cancel"
+ui.clipboard_clear_countdown:
+  pt-BR: "%{msg} (limpo do clipboard em %{secs}s)"
+  en: "%{msg} (cleared from clipboard in %{secs}s)"
+ui.search_title:
+  pt-BR: " Pesquisar (/) "
+  en: " Search (/) "
+ui.mode_normal_title:
+  pt-BR: " NORMAL (j/k) "
+  en: " NORMAL (j/k) "
+ui.mode_search_title:
+  pt-BR: " PESQUISA "
+  en: " SEARCH "
+ui.confirm_delete:
+  pt-BR: "\nDeseja EXCLUIR '%{entry}'? [y/N]"
+  en: "\nDo you want to DELETE '%{entry}'? [y/N]"
+ui.rename_group_title:
+  pt-BR: " Renomear Grupo "
+  en: " Rename Group "
+ui.footer_form_full:
+  pt-BR: "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar (Notas: quebra linha)"
+  en: "TAB/SHIFT-TAB: Navigate | ENTER: Confirm (Notes: line break)"
+ui.footer_form_pass:
+  pt-BR: "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar"
+  en: "TAB/SHIFT-TAB: Navigate | ENTER: Confirm"
+ui.info_footer_full:
+  pt-BR: "Clique e arraste em um campo para selecionar e copiar | TAB: Alternar | ESC: Fechar"
+  en: "Click and drag in a field to select and copy | TAB: Switch | ESC: Close"
+ui.info_footer_pass:
+  pt-BR: "Clique e arraste para selecionar e copiar | ESC: Fechar"
+  en: "Click and drag to select and copy | ESC: Close"
+ui.context_add_new:
+  pt-BR: "Adicionar nova"
+  en: "Add new"
+ui.context_edit:
+  pt-BR: "Editar"
+  en: "Edit"
+ui.context_delete:
+  pt-BR: "Excluir"
+  en: "Delete"
+ui.help_mouse_section:
+  pt-BR: "MOUSE"
+  en: "MOUSE"
+ui.help_copy_password:
+  pt-BR: "Copiar senha"
+  en: "Copy password"
+ui.help_view_details:
+  pt-BR: "Ver detalhes da entrada"
+  en: "View entry details"
+ui.help_open_menu:
+  pt-BR: "Abrir menu de ações"
+  en: "Open actions menu"
+ui.help_add_entry:
+  pt-BR: "Adicionar entrada"
+  en: "Add entry"
+ui.help_edit_entry:
+  pt-BR: "Editar entrada / renomear grupo"
+  en: "Edit entry / rename group"
+ui.help_delete_entry:
+  pt-BR: "Excluir entrada"
+  en: "Delete entry"
+ui.help_exit_search:
+  pt-BR: "Sair da busca / Fechar modal"
+  en: "Exit search / Close modal"
+ui.help_click_label:
+  pt-BR: "Clique"
+  en: "Click"
+ui.help_select_entry:
+  pt-BR: "Selecionar entrada"
+  en: "Select entry"
+ui.help_double_click_label:
+  pt-BR: "Duplo clique"
+  en: "Double click"
+ui.help_right_click_label:
+  pt-BR: "Botão direito"
+  en: "Right click"
+ui.help_context_menu_desc:
+  pt-BR: "Menu de ações"
+  en: "Actions menu"
+
+# --- common (compartilhado entre app.rs/db_app.rs/ui.rs) ---
+common.title_label:
+  pt-BR: " Título "
+  en: " Title "
+common.username_label:
+  pt-BR: " Usuário "
+  en: " Username "
+common.password_label:
+  pt-BR: " Senha "
+  en: " Password "
+common.url_label:
+  pt-BR: " URL "
+  en: " URL "
+common.notes_label:
+  pt-BR: " Notas "
+  en: " Notes "
+common.group_label:
+  pt-BR: " Grupo "
+  en: " Group "
+common.edit_entry_title:
+  pt-BR: " Editar Entrada "
+  en: " Edit Entry "
+common.new_entry_title:
+  pt-BR: " Nova Entrada "
+  en: " New Entry "
+common.entry_info_title:
+  pt-BR: " Informações da Entrada "
+  en: " Entry Information "
+common.title_word:
+  pt-BR: "Título"
+  en: "Title"
+common.actions_title:
+  pt-BR: " Ações "
+  en: " Actions "
+common.space_key:
+  pt-BR: "ESPAÇO"
+  en: "SPACE"
+common.empty_group_marker:
+  pt-BR: "[vazio]"
+  en: "[empty]"

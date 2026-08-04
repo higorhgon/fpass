@@ -7,6 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame, Terminal,
 };
+use rust_i18n::t;
 use std::{io, time::{Duration, Instant}};
 
 use crate::app::{App, ContextAction, TextSelection};
@@ -394,17 +395,17 @@ fn handle_form_key(app: &mut App, code: KeyCode) {
 /// Texto mínimo de dicas de atalhos exibido na área de rodapé, por modo.
 /// Mantido enxuto de propósito — a lista completa fica no modal de ajuda
 /// (CTRL+?), que é sempre o atalho mais essencial a lembrar.
-fn footer_hint_text(mode: AppMode) -> &'static str {
+fn footer_hint_text(mode: AppMode) -> String {
     match mode {
-        AppMode::Search => "ENTER: Copiar | TAB: Info | CTRL+?: Ajuda",
-        AppMode::Normal => "ENTER: Copiar | ESPAÇO: Ações | CTRL+?: Ajuda | ESC/q: Sair",
-        AppMode::ConfirmDelete => "y: Sim | n/N: Não",
-        AppMode::Form => "TAB: Navegar | ENTER: Confirmar | ESC: Cancelar",
-        AppMode::Info => "Arraste para copiar | TAB: Alternar | ESC: Fechar",
-        AppMode::ContextMenu => "j/k: Navegar | ENTER: Confirmar | ESC: Fechar",
-        AppMode::Help => "ESC: Fechar",
-        AppMode::RenameGroup => "ENTER: Renomear | ESC: Cancelar",
-        _ => "",
+        AppMode::Search => t!("ui.footer_search").to_string(),
+        AppMode::Normal => t!("ui.footer_normal").to_string(),
+        AppMode::ConfirmDelete => t!("common.yes_no_hint").to_string(),
+        AppMode::Form => t!("ui.footer_form").to_string(),
+        AppMode::Info => t!("ui.footer_info").to_string(),
+        AppMode::ContextMenu => t!("ui.footer_context_menu").to_string(),
+        AppMode::Help => t!("common.footer_close").to_string(),
+        AppMode::RenameGroup => t!("ui.footer_rename").to_string(),
+        _ => String::new(),
     }
 }
 
@@ -458,7 +459,7 @@ fn build_footer_content(app: &mut App, hint_text: &str, width: usize) -> FooterC
             app.message = None;
         } else {
             let text = match msg.clipboard_clear_secs {
-                Some(secs) => format!("{} (limpo do clipboard em {}s)", msg.text, secs.saturating_sub(elapsed.as_secs())),
+                Some(secs) => t!("ui.clipboard_clear_countdown", msg = msg.text, secs = secs.saturating_sub(elapsed.as_secs())).to_string(),
                 None => msg.text,
             };
             let color = if msg.is_error { app.theme.alert_error } else { app.theme.alert_info };
@@ -478,7 +479,7 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
 
     let hint_text = footer_hint_text(app.mode);
     let footer_width = full.width.saturating_sub(2) as usize;
-    let footer = build_footer_content(app, hint_text, footer_width);
+    let footer = build_footer_content(app, &hint_text, footer_width);
     let footer_height = (footer.lines.len() as u16 + 2).max(3).min(full.height);
 
     let chunks = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(footer_height)]).split(full);
@@ -487,9 +488,9 @@ fn draw_ui(f: &mut Frame, app: &mut App) {
 
     let (search_text, search_color) = if app.mode == AppMode::Search { (format!(" {}█ ", app.search_query), app.theme.annotation) } else { (format!(" {} ", app.search_query), app.theme.guidance) };
     let search_text = scroll_tail(&search_text, chunks[0].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(search_text).block(Block::default().title(" Pesquisar (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
+    f.render_widget(Paragraph::new(search_text).block(Block::default().title(t!("ui.search_title").to_string()).borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
 
-    let list_title = if app.mode == AppMode::Normal { " NORMAL (j/k) " } else { " PESQUISA " };
+    let list_title = if app.mode == AppMode::Normal { t!("ui.mode_normal_title").to_string() } else { t!("ui.mode_search_title").to_string() };
     let list_color = if app.mode == AppMode::Normal { app.theme.title } else { app.theme.base };
     let items: Vec<ListItem> = app.filtered.iter().enumerate().map(|(i, e)| {
         let item = ListItem::new(e.as_str());
@@ -525,7 +526,7 @@ fn draw_confirm_delete_modal(f: &mut Frame, app: &mut App) {
     let area = centered_fixed_rect(60, 5, f.size());
     app.confirm_delete_rect = area;
     f.render_widget(Clear, area);
-    f.render_widget(Paragraph::new(format!("\nDeseja EXCLUIR '{}'? [y/N]", app.get_selected().unwrap_or_default())).block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(app.theme.important))).alignment(Alignment::Center), area);
+    f.render_widget(Paragraph::new(t!("ui.confirm_delete", entry = app.get_selected().unwrap_or_default()).to_string()).block(Block::default().title(t!("common.confirm_title").to_string()).borders(Borders::ALL).style(Style::default().fg(app.theme.important))).alignment(Alignment::Center), area);
 }
 
 fn draw_rename_group_modal(f: &mut Frame, app: &mut App) {
@@ -533,7 +534,7 @@ fn draw_rename_group_modal(f: &mut Frame, app: &mut App) {
     app.rename_group_rect = area;
     f.render_widget(Clear, area);
 
-    let block = Block::default().title(" Renomear Grupo ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
+    let block = Block::default().title(t!("ui.rename_group_title").to_string()).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
     f.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
@@ -543,8 +544,8 @@ fn draw_rename_group_modal(f: &mut Frame, app: &mut App) {
     ]).split(inner);
 
     let title_text = scroll_tail(&format!(" {}█", app.rename_group_title), chunks[0].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(title_text).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(app.theme.annotation))), chunks[0]);
-    f.render_widget(Paragraph::new("ENTER: Renomear | ESC: Cancelar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[1]);
+    f.render_widget(Paragraph::new(title_text).block(Block::default().title(t!("common.title_label").to_string()).borders(Borders::ALL).style(Style::default().fg(app.theme.annotation))), chunks[0]);
+    f.render_widget(Paragraph::new(t!("ui.footer_rename").to_string()).alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[1]);
 }
 
 fn draw_form_modal(f: &mut Frame, app: &mut App) {
@@ -561,7 +562,8 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
     app.form_rect = area;
     f.render_widget(Clear, area);
 
-    let form_block = Block::default().title(if app.form_is_edit { " Editar Entrada " } else { " Nova Entrada " }).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
+    let form_title = if app.form_is_edit { t!("common.edit_entry_title") } else { t!("common.new_entry_title") };
+    let form_block = Block::default().title(form_title.to_string()).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
     f.render_widget(form_block.clone(), area);
 
     let inner_area = form_block.inner(area);
@@ -584,21 +586,21 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
 
     let title_color = if app.form_active_field == 1 { app.theme.annotation } else { app.theme.base };
     let title_text = scroll_tail(&format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" }), form_chunks[2].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(title_text).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
+    f.render_widget(Paragraph::new(title_text).block(Block::default().title(t!("common.title_label").to_string()).borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
     let user_color = if app.form_active_field == 2 { app.theme.annotation } else { app.theme.base };
     let user_text = scroll_tail(&format!(" {}{}", app.form_username, if app.form_active_field == 2 { "█" } else { "" }), form_chunks[3].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(user_text).block(Block::default().title(" Usuário ").borders(Borders::ALL).style(Style::default().fg(user_color))), form_chunks[3]);
+    f.render_widget(Paragraph::new(user_text).block(Block::default().title(t!("common.username_label").to_string()).borders(Borders::ALL).style(Style::default().fg(user_color))), form_chunks[3]);
     let pass_color = if app.form_active_field == 3 { app.theme.annotation } else { app.theme.base };
     let hidden: String = app.form_password.chars().map(|_| '*').collect();
     let pass_cursor = if app.form_active_field == 3 { mask_cursor(app.form_password.chars().count()).to_string() } else { String::new() };
     let pass_text = scroll_tail(&format!(" {}{}", hidden, pass_cursor), form_chunks[4].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(pass_text).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[4]);
+    f.render_widget(Paragraph::new(pass_text).block(Block::default().title(t!("common.password_label").to_string()).borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[4]);
     let url_color = if app.form_active_field == 4 { app.theme.annotation } else { app.theme.base };
     let url_text = scroll_tail(&format!(" {}{}", app.form_url, if app.form_active_field == 4 { "█" } else { "" }), form_chunks[5].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(url_text).block(Block::default().title(" URL ").borders(Borders::ALL).style(Style::default().fg(url_color))), form_chunks[5]);
+    f.render_widget(Paragraph::new(url_text).block(Block::default().title(t!("common.url_label").to_string()).borders(Borders::ALL).style(Style::default().fg(url_color))), form_chunks[5]);
 
     let notes_color = if app.form_active_field == 5 { app.theme.annotation } else { app.theme.base };
-    let notes_block = Block::default().title(" Notas ").borders(Borders::ALL).border_style(Style::default().fg(notes_color));
+    let notes_block = Block::default().title(t!("common.notes_label").to_string()).borders(Borders::ALL).border_style(Style::default().fg(notes_color));
     let notes_inner = notes_block.inner(form_chunks[6]);
     f.render_widget(notes_block, form_chunks[6]);
 
@@ -609,7 +611,7 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
     let start = wrapped.len().saturating_sub(visible.max(1));
     f.render_widget(Paragraph::new(wrapped[start..].join("\n")), notes_inner);
 
-    f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar (Notas: quebra linha)").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[8]);
+    f.render_widget(Paragraph::new(t!("ui.footer_form_full").to_string()).alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[8]);
 }
 
 /// Formulário reduzido para entradas do tipo `pass`: apenas Grupo, Título e
@@ -624,7 +626,8 @@ fn draw_form_modal_pass(f: &mut Frame, app: &mut App, show_dropdown: bool) {
     app.form_rect = area;
     f.render_widget(Clear, area);
 
-    let form_block = Block::default().title(if app.form_is_edit { " Editar Entrada " } else { " Nova Entrada " }).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
+    let form_title = if app.form_is_edit { t!("common.edit_entry_title") } else { t!("common.new_entry_title") };
+    let form_block = Block::default().title(form_title.to_string()).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_info));
     f.render_widget(form_block.clone(), area);
 
     let inner_area = form_block.inner(area);
@@ -644,19 +647,19 @@ fn draw_form_modal_pass(f: &mut Frame, app: &mut App, show_dropdown: bool) {
 
     let title_color = if app.form_active_field == 1 { app.theme.annotation } else { app.theme.base };
     let title_text = scroll_tail(&format!(" {}{}", app.form_title, if app.form_active_field == 1 { "█" } else { "" }), form_chunks[2].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(title_text).block(Block::default().title(" Título ").borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
+    f.render_widget(Paragraph::new(title_text).block(Block::default().title(t!("common.title_label").to_string()).borders(Borders::ALL).style(Style::default().fg(title_color))), form_chunks[2]);
 
     let pass_color = if app.form_active_field == 2 { app.theme.annotation } else { app.theme.base };
     let hidden: String = app.form_password.chars().map(|_| '*').collect();
     let pass_cursor = if app.form_active_field == 2 { mask_cursor(app.form_password.chars().count()).to_string() } else { String::new() };
     let pass_text = scroll_tail(&format!(" {}{}", hidden, pass_cursor), form_chunks[3].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(pass_text).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[3]);
+    f.render_widget(Paragraph::new(pass_text).block(Block::default().title(t!("common.password_label").to_string()).borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[3]);
 
-    f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[5]);
+    f.render_widget(Paragraph::new(t!("ui.footer_form_pass").to_string()).alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[5]);
 }
 
 fn draw_form_group_field(f: &mut Frame, app: &mut App, group_rect: Rect, show_dropdown: bool) {
-    let group_block = Block::default().title(" Grupo ").borders(Borders::ALL).border_style(Style::default().fg(if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base }));
+    let group_block = Block::default().title(t!("common.group_label").to_string()).borders(Borders::ALL).border_style(Style::default().fg(if app.form_active_field == 0 { app.theme.annotation } else { app.theme.base }));
     f.render_widget(group_block, group_rect);
     let group_text = scroll_tail(&format!(" {}{}", app.form_group, if app.form_active_field == 0 { "█" } else { "" }), group_rect.width.saturating_sub(2) as usize);
     f.render_widget(Paragraph::new(group_text), Rect::new(group_rect.x + 1, group_rect.y + 1, group_rect.width - 2, 1));
@@ -721,7 +724,7 @@ fn draw_info_modal(f: &mut Frame, app: &mut App) {
     app.info_modal_rect = area;
     f.render_widget(Clear, area);
 
-    let block = Block::default().title(" Informações da Entrada ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+    let block = Block::default().title(t!("common.entry_info_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
     f.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
@@ -732,11 +735,12 @@ fn draw_info_modal(f: &mut Frame, app: &mut App) {
         Constraint::Length(1), // Rodapé
     ]).split(inner);
 
-    draw_info_field(f, app, 0, "Título", chunks[0]);
+    let title_word = t!("common.title_word").to_string();
+    draw_info_field(f, app, 0, &title_word, chunks[0]);
     draw_info_field(f, app, 1, "URL", chunks[1]);
 
     let notes_color = if app.info_active_field == 2 { app.theme.annotation } else { app.theme.base };
-    let notes_block = Block::default().title(" Notas ").borders(Borders::ALL).border_style(Style::default().fg(notes_color));
+    let notes_block = Block::default().title(t!("common.notes_label").to_string()).borders(Borders::ALL).border_style(Style::default().fg(notes_color));
     let notes_inner = notes_block.inner(chunks[2]);
     app.info_field_rects[2] = notes_inner;
     f.render_widget(notes_block, chunks[2]);
@@ -752,7 +756,7 @@ fn draw_info_modal(f: &mut Frame, app: &mut App) {
         .collect();
     f.render_widget(Paragraph::new(out_lines), notes_inner);
 
-    f.render_widget(Paragraph::new("Clique e arraste em um campo para selecionar e copiar | TAB: Alternar | ESC: Fechar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[3]);
+    f.render_widget(Paragraph::new(t!("ui.info_footer_full").to_string()).alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[3]);
 }
 
 /// Modal de informações reduzido para entradas `pass`: o formato não tem
@@ -762,7 +766,7 @@ fn draw_info_modal_pass(f: &mut Frame, app: &mut App) {
     app.info_modal_rect = area;
     f.render_widget(Clear, area);
 
-    let block = Block::default().title(" Informações da Entrada ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+    let block = Block::default().title(t!("common.entry_info_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
     f.render_widget(block.clone(), area);
     let inner = block.inner(area);
 
@@ -771,9 +775,10 @@ fn draw_info_modal_pass(f: &mut Frame, app: &mut App) {
         Constraint::Length(1), // Rodapé
     ]).split(inner);
 
-    draw_info_field(f, app, 0, "Título", chunks[0]);
+    let title_word = t!("common.title_word").to_string();
+    draw_info_field(f, app, 0, &title_word, chunks[0]);
 
-    f.render_widget(Paragraph::new("Clique e arraste para selecionar e copiar | ESC: Fechar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[1]);
+    f.render_widget(Paragraph::new(t!("ui.info_footer_pass").to_string()).alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), chunks[1]);
 }
 
 fn draw_context_menu(f: &mut Frame, app: &mut App) {
@@ -785,11 +790,14 @@ fn draw_context_menu(f: &mut Frame, app: &mut App) {
     app.context_menu_rect = area;
     f.render_widget(Clear, area);
 
-    let block = Block::default().title(" Ações ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.title));
+    let block = Block::default().title(t!("common.actions_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.title));
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let labels = ["Adicionar nova", "Editar", "Excluir"];
+    let add_new = t!("ui.context_add_new").to_string();
+    let edit = t!("ui.context_edit").to_string();
+    let delete = t!("ui.context_delete").to_string();
+    let labels = [add_new.as_str(), edit.as_str(), delete.as_str()];
     app.context_menu_item_rects.clear();
     for (i, label) in labels.iter().enumerate() {
         let row = Rect::new(inner.x, inner.y + i as u16, inner.width, 1);
@@ -804,33 +812,59 @@ fn draw_context_menu(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_help_modal(f: &mut Frame, app: &mut App) {
+    let nav_section = t!("help.nav_section").to_string();
+    let actions_section = t!("help.actions_section").to_string();
+    let search_section = t!("help.search_section").to_string();
+    let mouse_section = t!("ui.help_mouse_section").to_string();
+    let general_section = t!("help.general_section").to_string();
+    let move_selection = t!("help.move_selection").to_string();
+    let go_top_bottom = t!("help.go_top_bottom").to_string();
+    let half_page = t!("help.half_page").to_string();
+    let next_prev = t!("help.next_prev").to_string();
+    let copy_password = t!("ui.help_copy_password").to_string();
+    let view_details = t!("ui.help_view_details").to_string();
+    let open_menu = t!("ui.help_open_menu").to_string();
+    let add_entry = t!("ui.help_add_entry").to_string();
+    let edit_entry = t!("ui.help_edit_entry").to_string();
+    let delete_entry = t!("ui.help_delete_entry").to_string();
+    let enter_search = t!("help.enter_search").to_string();
+    let exit_search = t!("ui.help_exit_search").to_string();
+    let click_label = t!("ui.help_click_label").to_string();
+    let select_entry = t!("ui.help_select_entry").to_string();
+    let double_click_label = t!("ui.help_double_click_label").to_string();
+    let right_click_label = t!("ui.help_right_click_label").to_string();
+    let context_menu_desc = t!("ui.help_context_menu_desc").to_string();
+    let this_help = t!("help.this_help").to_string();
+    let quit_fpass = t!("help.quit_fpass").to_string();
+    let space_key = t!("common.space_key").to_string();
+
     let sections: [(&str, &[(&str, &str)]); 5] = [
-        ("NAVEGAÇÃO", &[
-            ("j/k, ↑/↓", "Mover seleção"),
-            ("gg / G", "Ir para o topo / fim"),
-            ("CTRL-U/D", "Meia página"),
-            ("CTRL-N/P", "Próximo/anterior (busca e dropdowns)"),
+        (&nav_section, &[
+            ("j/k, ↑/↓", move_selection.as_str()),
+            ("gg / G", go_top_bottom.as_str()),
+            ("CTRL-U/D", half_page.as_str()),
+            ("CTRL-N/P", next_prev.as_str()),
         ]),
-        ("AÇÕES", &[
-            ("ENTER", "Copiar senha"),
-            ("TAB", "Ver detalhes da entrada"),
-            ("ESPAÇO", "Abrir menu de ações"),
-            ("CTRL-A", "Adicionar entrada"),
-            ("CTRL-E", "Editar entrada / renomear grupo"),
-            ("CTRL-X", "Excluir entrada"),
+        (&actions_section, &[
+            ("ENTER", copy_password.as_str()),
+            ("TAB", view_details.as_str()),
+            (space_key.as_str(), open_menu.as_str()),
+            ("CTRL-A", add_entry.as_str()),
+            ("CTRL-E", edit_entry.as_str()),
+            ("CTRL-X", delete_entry.as_str()),
         ]),
-        ("BUSCA", &[
-            ("/, f ou i", "Entrar em modo de busca"),
-            ("ESC", "Sair da busca / Fechar modal"),
+        (&search_section, &[
+            ("/, f ou i", enter_search.as_str()),
+            ("ESC", exit_search.as_str()),
         ]),
-        ("MOUSE", &[
-            ("Clique", "Selecionar entrada"),
-            ("Duplo clique", "Copiar senha"),
-            ("Botão direito", "Menu de ações"),
+        (&mouse_section, &[
+            (click_label.as_str(), select_entry.as_str()),
+            (double_click_label.as_str(), copy_password.as_str()),
+            (right_click_label.as_str(), context_menu_desc.as_str()),
         ]),
-        ("GERAL", &[
-            ("CTRL+?", "Esta ajuda"),
-            ("CTRL-C", "Sair do fpass"),
+        (&general_section, &[
+            ("CTRL+?", this_help.as_str()),
+            ("CTRL-C", quit_fpass.as_str()),
         ]),
     ];
 
@@ -841,7 +875,7 @@ fn draw_help_modal(f: &mut Frame, app: &mut App) {
         for (key, desc) in items.iter() {
             lines.push(Line::from(vec![
                 Span::styled(format!("  {:<16}", key), Style::default().fg(app.theme.annotation)),
-                Span::styled(*desc, Style::default().fg(app.theme.base)),
+                Span::styled(desc.to_string(), Style::default().fg(app.theme.base)),
             ]));
         }
     }
@@ -851,7 +885,7 @@ fn draw_help_modal(f: &mut Frame, app: &mut App) {
     app.help_modal_rect = area;
     f.render_widget(Clear, area);
 
-    let block = Block::default().title(" Atalhos de Teclado ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+    let block = Block::default().title(t!("common.shortcuts_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(lines), inner);

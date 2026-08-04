@@ -1,9 +1,10 @@
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
+use rust_i18n::t;
 use std::time::Instant;
 use zeroize::Zeroizing;
 
-use crate::backend::{Backend, BackendKind, EntryData};
+use crate::backend::{empty_group_suffix, Backend, BackendKind, EntryData};
 use crate::clipboard;
 use crate::config::Theme;
 use crate::history::History;
@@ -171,7 +172,7 @@ impl App {
 
     pub fn open_info_modal(&mut self) {
         let Some(entry) = self.get_selected() else { return; };
-        if entry.ends_with("/[vazio]") { self.set_msg("Isso é um grupo vazio!", true); return; }
+        if entry.ends_with(&empty_group_suffix()) { self.set_msg(&t!("app.empty_group"), true); return; }
 
         let fallback = entry.rsplit('/').next().unwrap_or(&entry).to_string();
         self.info_title = self.backend.title_for(&entry, &fallback);
@@ -244,8 +245,8 @@ impl App {
         let text = self.info_selected_text(field);
         if text.is_empty() { return; }
         match clipboard::copy_to_clipboard(&text, self.is_mac) {
-            Ok(()) => self.set_msg("Copiado para a área de transferência!", false),
-            Err(_) => self.set_msg("Erro ao copiar.", true),
+            Ok(()) => self.set_msg(&t!("app.copied_to_clipboard"), false),
+            Err(_) => self.set_msg(&t!("app.copy_error"), true),
         }
     }
 
@@ -269,7 +270,7 @@ impl App {
                 self.form_notes = data.notes;
                 self.form_extra = data.extra;
             }
-            Err(e) => self.set_msg(&format!("Erro lendo entrada: {}", e), true),
+            Err(e) => self.set_msg(&t!("app.read_entry_error", err = e), true),
         }
         // Grupo/título já vieram do path; pula direto para o próximo campo
         // relevante (Senha, que é sempre o campo mais editado).
@@ -280,8 +281,8 @@ impl App {
     /// Edita o item selecionado: uma entrada normal abre o formulário de
     /// edição; um grupo vazio (`/[vazio]`) abre o modal de renomear grupo.
     pub fn edit_selected(&mut self) {
-        let Some(entry) = self.get_selected() else { self.set_msg("Nenhuma entrada selecionada.", true); return; };
-        if entry.ends_with("/[vazio]") {
+        let Some(entry) = self.get_selected() else { self.set_msg(&t!("app.no_entry_selected"), true); return; };
+        if entry.ends_with(&empty_group_suffix()) {
             self.open_rename_group(entry);
         } else {
             self.open_edit_form(entry);
@@ -289,7 +290,7 @@ impl App {
     }
 
     pub fn open_rename_group(&mut self, group_entry: String) {
-        let group = group_entry.trim_end_matches("/[vazio]").to_string();
+        let group = group_entry.trim_end_matches(&empty_group_suffix()).to_string();
         let name = group.rsplit('/').next().unwrap_or(&group).to_string();
         self.rename_group_original = group;
         self.rename_group_title = name;
@@ -299,10 +300,10 @@ impl App {
 
     pub fn submit_rename_group(&mut self) {
         let new_name = self.rename_group_title.trim().to_string();
-        if new_name.is_empty() { self.set_msg("O nome não pode ser vazio!", true); return; }
+        if new_name.is_empty() { self.set_msg(&t!("app.name_empty"), true); return; }
         match self.backend.rename_group(&self.rename_group_original, &new_name) {
-            Ok(()) => self.set_msg("Grupo renomeado com sucesso!", false),
-            Err(e) => self.set_msg(&format!("Erro ao renomear grupo: {}", e), true),
+            Ok(()) => self.set_msg(&t!("app.group_renamed"), false),
+            Err(e) => self.set_msg(&t!("app.rename_group_error", err = e), true),
         }
         self.refresh_entries();
         self.mode = AppMode::Normal;
@@ -336,7 +337,7 @@ impl App {
             ContextAction::Edit => self.edit_selected(),
             ContextAction::Delete => {
                 if self.get_selected().is_some() { self.hover_index = None; self.mode = AppMode::ConfirmDelete; }
-                else { self.set_msg("Nenhuma entrada selecionada.", true); }
+                else { self.set_msg(&t!("app.no_entry_selected"), true); }
             }
         }
     }
@@ -354,7 +355,7 @@ impl App {
         let title = self.form_title.trim().to_string();
         let path = if group.is_empty() { title.clone() } else { format!("{}/{}", group, title) };
 
-        if title.is_empty() { self.set_msg("O Título não pode ser vazio!", true); return; }
+        if title.is_empty() { self.set_msg(&t!("app.title_empty"), true); return; }
 
         let data = EntryData {
             username: self.form_username.trim().to_string(),
@@ -373,9 +374,13 @@ impl App {
         match result {
             Ok(()) => {
                 if !self.form_is_edit { self.history.record_use(&path); }
-                self.set_msg(if self.form_is_edit { "Entrada editada com sucesso!" } else { "Entrada adicionada!" }, false);
+                let msg = if self.form_is_edit { t!("app.entry_edited") } else { t!("app.entry_added") };
+                self.set_msg(&msg, false);
             }
-            Err(_) => self.set_msg(if self.form_is_edit { "Erro ao editar." } else { "Erro ao adicionar." }, true),
+            Err(_) => {
+                let msg = if self.form_is_edit { t!("app.edit_error") } else { t!("app.add_error") };
+                self.set_msg(&msg, true);
+            }
         }
         self.refresh_entries(); self.mode = AppMode::Normal;
     }
@@ -404,42 +409,43 @@ impl App {
 
     pub fn copy_password(&mut self) {
         let Some(entry) = self.get_selected() else { return; };
-        if entry.ends_with("/[vazio]") {
-            self.set_msg("Isso é um grupo vazio!", true);
+        if entry.ends_with(&empty_group_suffix()) {
+            self.set_msg(&t!("app.empty_group"), true);
             return;
         }
         self.history.record_use(&entry);
 
         let Ok(entry_pass) = self.backend.fetch_password(&entry) else {
-            self.set_msg("Erro ao copiar senha.", true);
+            self.set_msg(&t!("app.copy_password_error"), true);
             return;
         };
 
         match clipboard::copy_to_clipboard(&entry_pass, self.is_mac) {
             Ok(()) => {
-                self.set_clipboard_msg(&format!("Copiado: {}", entry));
+                self.set_clipboard_msg(&t!("app.copied_entry", entry = entry));
                 clipboard::spawn_clipboard_clearer(entry_pass, self.is_mac);
             }
-            Err(_) => self.set_msg("Erro ao copiar senha.", true),
+            Err(_) => self.set_msg(&t!("app.copy_password_error"), true),
         }
     }
 
     pub fn delete_selected(&mut self) {
         let Some(entry) = self.get_selected() else { return; };
-        let is_empty_group = entry.ends_with("/[vazio]");
+        let is_empty_group = entry.ends_with(&empty_group_suffix());
         let result = if is_empty_group {
-            self.backend.remove_group(entry.trim_end_matches("/[vazio]"))
+            self.backend.remove_group(entry.trim_end_matches(&empty_group_suffix()))
         } else {
             self.backend.remove_entry(&entry)
         };
 
         match result {
             Ok(()) => {
-                self.set_msg(if is_empty_group { "Grupo excluído!" } else { "Entrada excluída!" }, false);
+                let msg = if is_empty_group { t!("app.group_deleted") } else { t!("app.entry_deleted") };
+                self.set_msg(&msg, false);
                 self.refresh_entries();
                 self.previous();
             }
-            Err(e) => self.set_msg(&format!("Erro ao excluir: {}", e), true),
+            Err(e) => self.set_msg(&t!("app.delete_error", err = e), true),
         }
     }
 }

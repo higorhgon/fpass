@@ -116,10 +116,12 @@ Inicializa (ou reaponta) o password-store padrão para os `KEYID`s informados e 
 
 Arquivos em `~/.config/fpass/`:
 
-- `config.toml` — caminho de busca, recency e tema ativo
+- `config.toml` — caminho de busca, recency, tema ativo e idioma
 - `themes/*.toml` — definições de cores personalizadas
 
 `path` define onde o fpass procura **tanto** arquivos `.kdbx` quanto password-stores do pass (diretórios com `.gpg-id`); o `~/.password-store` convencional é sempre verificado, mesmo que `path` aponte para outro lugar.
+
+`language` controla o idioma da interface, em ordem de prioridade: (1) valor explícito no config.toml (`"pt-BR"`/`"en"`); (2) na ausência de um valor explícito (`"auto"` ou omitido), autodetecção pelo `$LANG`/`$LC_ALL` do sistema; (3) se nada foi configurado nem detectado, o padrão é inglês. Só o texto gerado pelo próprio fpass é traduzido — mensagens de erro que vêm direto do `keepassxc-cli`, `pass` ou `gpg` continuam no idioma dessas ferramentas, fora do controle do fpass.
 
 Exemplo de `config.toml`:
 
@@ -128,6 +130,7 @@ Exemplo de `config.toml`:
 path = "~/docs/keepass"
 recency = true
 theme = "meu-tema"
+language = "pt-BR"
 ```
 
 Exemplo de tema em `~/.config/fpass/themes/tema.toml`:

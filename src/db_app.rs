@@ -12,6 +12,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
+use rust_i18n::t;
 use std::{io, time::Duration};
 use zeroize::Zeroizing;
 
@@ -179,13 +180,13 @@ impl DbApp {
 
     fn submit_create_pass_store(&mut self) {
         let Some(idx) = self.create_pass_key_state.selected() else {
-            self.error_msg = Some("Nenhuma chave GPG selecionada. Crie uma com: gpg --full-generate-key".to_string());
+            self.error_msg = Some(t!("db_app.no_gpg_key_selected").to_string());
             return;
         };
         let (keyid, _) = self.create_pass_keys[idx].clone();
         let dir = self.create_pass_dir.trim().to_string();
         if dir.is_empty() {
-            self.error_msg = Some("O diretório não pode ser vazio!".to_string());
+            self.error_msg = Some(t!("db_app.dir_empty").to_string());
             return;
         }
         match pass::init_store(std::path::Path::new(&dir), &keyid) {
@@ -383,7 +384,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
 
     let (search_text, search_color) = if app.mode == AppMode::Search { (format!(" {}█ ", app.search_query), app.theme.annotation) } else { (format!(" {} ", app.search_query), app.theme.guidance) };
     let search_text = scroll_tail(&search_text, chunks[0].width.saturating_sub(2) as usize);
-    f.render_widget(Paragraph::new(search_text).block(Block::default().title(" Filtrar Banco (/) ").borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
+    f.render_widget(Paragraph::new(search_text).block(Block::default().title(t!("db_app.filter_title").to_string()).borders(Borders::ALL).style(Style::default().fg(search_color))), chunks[0]);
 
     let list_color = if app.mode == AppMode::Normal { app.theme.title } else { app.theme.base };
     let items: Vec<ListItem> = app.filtered.iter().map(|d| {
@@ -392,22 +393,22 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
             Span::raw(d.path.as_str()),
         ]))
     }).collect();
-    let list = List::new(items).block(Block::default().title(" Bancos Disponíveis ").borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
+    let list = List::new(items).block(Block::default().title(t!("db_app.available_dbs_title").to_string()).borders(Borders::ALL).style(Style::default().fg(list_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol(">> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
     // Apenas as dicas essenciais ficam visíveis aqui; a lista completa de
     // atalhos está no modal de ajuda (CTRL+?).
     let footer_text = match app.mode {
-        AppMode::Search => "ENTER: Selecionar | CTRL+?: Ajuda | ESC: Normal",
-        AppMode::ConfirmCreateDb => "y: Sim | n/N: Não",
-        AppMode::CreateDb => "TAB: Navegar | ENTER: Criar | ESC: Cancelar",
-        AppMode::ChooseDbType => "j/k: Navegar | ENTER: Confirmar | ESC: Cancelar",
-        AppMode::CreatePassStore => "TAB: Navegar | ENTER: Completar/Confirmar | ESC: Voltar",
-        AppMode::PasswordInput => "ENTER: Confirmar | ESC: Cancelar",
-        AppMode::Help => "ESC: Fechar",
-        _ => "ENTER: Selecionar | CTRL+A: Novo | CTRL+?: Ajuda | ESC/q: Sair",
+        AppMode::Search => t!("db_app.footer_search"),
+        AppMode::ConfirmCreateDb => t!("common.yes_no_hint"),
+        AppMode::CreateDb => t!("common.footer_navigate_create"),
+        AppMode::ChooseDbType => t!("db_app.footer_choose_type"),
+        AppMode::CreatePassStore => t!("common.footer_create_pass"),
+        AppMode::PasswordInput => t!("common.footer_confirm_cancel"),
+        AppMode::Help => t!("common.footer_close"),
+        _ => t!("db_app.footer_normal"),
     };
-    f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
+    f.render_widget(Paragraph::new(footer_text.to_string()).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
 
     if app.mode == AppMode::PasswordInput {
         let modal_area = centered_fixed_rect(70, 7, f.size());
@@ -418,7 +419,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
 
         let modal_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.alert_info };
         let modal_block = Block::default()
-            .title(format!(" Desbloquear: {} ", db_short))
+            .title(t!("db_app.unlock_title", db = db_short).to_string())
             .borders(Borders::ALL)
             .border_style(Style::default().fg(modal_color));
 
@@ -446,7 +447,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
 
         f.render_widget(input_field, input_chunks[1]);
 
-        let msg_text = if let Some(err) = &app.error_msg { err.as_str() } else { "ENTER: Confirmar | ESC: Cancelar" };
+        let msg_text = if let Some(err) = &app.error_msg { err.clone() } else { t!("common.footer_confirm_cancel").to_string() };
         let msg_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.guidance };
 
         let msg_paragraph = Paragraph::new(msg_text)
@@ -459,14 +460,14 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
     if app.mode == AppMode::ConfirmCreateDb {
         let area = centered_fixed_rect(60, 5, f.size());
         f.render_widget(Clear, area);
-        f.render_widget(Paragraph::new("\nNenhum banco de dados encontrado.\nDeseja criar um banco de dados? [y/N]").block(Block::default().title(" Confirmar ").borders(Borders::ALL).style(Style::default().fg(app.theme.alert_warn))).alignment(Alignment::Center), area);
+        f.render_widget(Paragraph::new(t!("db_app.no_db_found_confirm").to_string()).block(Block::default().title(t!("common.confirm_title").to_string()).borders(Borders::ALL).style(Style::default().fg(app.theme.alert_warn))).alignment(Alignment::Center), area);
     }
 
     if app.mode == AppMode::CreateDb {
         let modal_area = centered_fixed_rect(50, 10, f.size());
         f.render_widget(Clear, modal_area);
 
-        let modal_block = Block::default().title(" Criar Novo Banco de Dados ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+        let modal_block = Block::default().title(t!("db_app.create_db_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
         f.render_widget(modal_block.clone(), modal_area);
 
         let inner_area = modal_block.inner(modal_area);
@@ -479,7 +480,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let name_color = if app.create_db_active_field == 0 { app.theme.annotation } else { app.theme.base };
         let name_text = scroll_tail(&format!(" {}{}", app.new_db_name, if app.create_db_active_field == 0 { "█" } else { "" }), chunks[0].width.saturating_sub(2) as usize);
         let name_field = Paragraph::new(name_text)
-            .block(Block::default().title(" Nome do Arquivo ").borders(Borders::ALL).style(Style::default().fg(name_color)));
+            .block(Block::default().title(t!("db_app.filename_label").to_string()).borders(Borders::ALL).style(Style::default().fg(name_color)));
         f.render_widget(name_field, chunks[0]);
 
         let pass_color = if app.create_db_active_field == 1 { app.theme.annotation } else { app.theme.base };
@@ -487,13 +488,13 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let pass_cursor = if app.create_db_active_field == 1 { mask_cursor(app.new_db_password.chars().count()).to_string() } else { String::new() };
         let pass_text = scroll_tail(&format!(" {}{}", hidden_pw, pass_cursor), chunks[1].width.saturating_sub(2) as usize);
         let pass_field = Paragraph::new(pass_text)
-            .block(Block::default().title(" Senha do Banco ").borders(Borders::ALL).style(Style::default().fg(pass_color)));
+            .block(Block::default().title(t!("db_app.db_password_label").to_string()).borders(Borders::ALL).style(Style::default().fg(pass_color)));
         f.render_widget(pass_field, chunks[1]);
 
         let (footer_text, footer_color) = if let Some(err) = &app.error_msg {
-            (err.as_str(), app.theme.alert_error)
+            (err.clone(), app.theme.alert_error)
         } else {
-            ("TAB: Navegar | ENTER: Criar | ESC: Cancelar", app.theme.guidance)
+            (t!("common.footer_navigate_create").to_string(), app.theme.guidance)
         };
         f.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center).style(Style::default().fg(footer_color)), chunks[2]);
     }
@@ -502,7 +503,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let area = centered_fixed_rect(40, 4, f.size());
         f.render_widget(Clear, area);
 
-        let block = Block::default().title(" Novo Banco de Dados ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+        let block = Block::default().title(t!("db_app.new_db_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -528,7 +529,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let modal_area = centered_fixed_rect(60, height, f.size());
         f.render_widget(Clear, modal_area);
 
-        let modal_block = Block::default().title(" Novo Password Store (pass) ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+        let modal_block = Block::default().title(t!("db_app.new_pass_store_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
         f.render_widget(modal_block.clone(), modal_area);
 
         let inner_area = modal_block.inner(modal_area);
@@ -541,7 +542,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
 
         let dir_rect = chunks[0].union(chunks[1]);
         let dir_color = if app.create_pass_active_field == 0 { app.theme.annotation } else { app.theme.base };
-        let dir_block = Block::default().title(" Diretório ").borders(Borders::ALL).border_style(Style::default().fg(dir_color));
+        let dir_block = Block::default().title(t!("db_app.dir_label").to_string()).borders(Borders::ALL).border_style(Style::default().fg(dir_color));
         f.render_widget(dir_block, dir_rect);
         let dir_width = dir_rect.width.saturating_sub(2) as usize;
         let dir_text = scroll_tail(&format!(" {}{}", app.create_pass_dir, if app.create_pass_active_field == 0 { "█" } else { "" }), dir_width);
@@ -556,12 +557,12 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         }
 
         let key_color = if app.create_pass_active_field == 1 { app.theme.annotation } else { app.theme.base };
-        let key_block = Block::default().title(" Chave GPG ").borders(Borders::ALL).border_style(Style::default().fg(key_color));
+        let key_block = Block::default().title(t!("db_app.gpg_key_label").to_string()).borders(Borders::ALL).border_style(Style::default().fg(key_color));
         if app.create_pass_keys.is_empty() {
             let inner = key_block.inner(chunks[2]);
             f.render_widget(key_block, chunks[2]);
             f.render_widget(
-                Paragraph::new("Nenhuma chave GPG encontrada.\nCrie uma com: gpg --full-generate-key")
+                Paragraph::new(t!("db_app.no_gpg_key_found").to_string())
                     .style(Style::default().fg(app.theme.alert_warn)),
                 inner,
             );
@@ -572,9 +573,9 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         }
 
         let (footer_text, footer_color) = if let Some(err) = &app.error_msg {
-            (err.as_str(), app.theme.alert_error)
+            (err.clone(), app.theme.alert_error)
         } else {
-            ("TAB: Navegar | ENTER: Completar/Confirmar | ESC: Voltar", app.theme.guidance)
+            (t!("common.footer_create_pass").to_string(), app.theme.guidance)
         };
         f.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center).style(Style::default().fg(footer_color)), chunks[3]);
     }
@@ -585,24 +586,39 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
 }
 
 fn draw_help_modal(f: &mut Frame, app: &mut DbApp) {
+    let nav_section = t!("help.nav_section").to_string();
+    let actions_section = t!("help.actions_section").to_string();
+    let search_section = t!("help.search_section").to_string();
+    let general_section = t!("help.general_section").to_string();
+    let move_selection = t!("help.move_selection").to_string();
+    let go_top_bottom = t!("help.go_top_bottom").to_string();
+    let half_page = t!("help.half_page").to_string();
+    let next_prev = t!("help.next_prev").to_string();
+    let select_db = t!("db_app.help_select_db").to_string();
+    let create_new_db = t!("db_app.help_create_new_db").to_string();
+    let enter_search = t!("help.enter_search").to_string();
+    let exit_search = t!("db_app.help_exit_search").to_string();
+    let this_help = t!("help.this_help").to_string();
+    let quit_fpass = t!("help.quit_fpass").to_string();
+
     let sections: [(&str, &[(&str, &str)]); 4] = [
-        ("NAVEGAÇÃO", &[
-            ("j/k, ↑/↓", "Mover seleção"),
-            ("gg / G", "Ir para o topo / fim"),
-            ("CTRL-U/D", "Meia página"),
-            ("CTRL-N/P", "Próximo/anterior (busca e dropdowns)"),
+        (&nav_section, &[
+            ("j/k, ↑/↓", move_selection.as_str()),
+            ("gg / G", go_top_bottom.as_str()),
+            ("CTRL-U/D", half_page.as_str()),
+            ("CTRL-N/P", next_prev.as_str()),
         ]),
-        ("AÇÕES", &[
-            ("ENTER", "Selecionar banco"),
-            ("CTRL-A", "Criar novo banco"),
+        (&actions_section, &[
+            ("ENTER", select_db.as_str()),
+            ("CTRL-A", create_new_db.as_str()),
         ]),
-        ("BUSCA", &[
-            ("/, f ou i", "Entrar em modo de busca"),
-            ("ESC", "Sair da busca / Cancelar"),
+        (&search_section, &[
+            ("/, f ou i", enter_search.as_str()),
+            ("ESC", exit_search.as_str()),
         ]),
-        ("GERAL", &[
-            ("CTRL+?", "Esta ajuda"),
-            ("CTRL-C", "Sair do fpass"),
+        (&general_section, &[
+            ("CTRL+?", this_help.as_str()),
+            ("CTRL-C", quit_fpass.as_str()),
         ]),
     ];
 
@@ -613,7 +629,7 @@ fn draw_help_modal(f: &mut Frame, app: &mut DbApp) {
         for (key, desc) in items.iter() {
             lines.push(Line::from(vec![
                 Span::styled(format!("  {:<16}", key), Style::default().fg(app.theme.annotation)),
-                Span::styled(*desc, Style::default().fg(app.theme.base)),
+                Span::styled(desc.to_string(), Style::default().fg(app.theme.base)),
             ]));
         }
     }
@@ -622,7 +638,7 @@ fn draw_help_modal(f: &mut Frame, app: &mut DbApp) {
     let area = centered_fixed_rect(50, height, f.size());
     f.render_widget(Clear, area);
 
-    let block = Block::default().title(" Atalhos de Teclado ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
+    let block = Block::default().title(t!("common.shortcuts_title").to_string()).borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(Paragraph::new(lines), inner);

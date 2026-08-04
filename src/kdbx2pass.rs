@@ -10,6 +10,7 @@
 //! (ver `run`), então nenhuma senha sobrevive além do tempo de processar
 //! sua própria entrada.
 
+use rust_i18n::t;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use zeroize::{Zeroize, Zeroizing};
@@ -22,7 +23,7 @@ const ROOT_GROUP_NAMES: [&str; 5] = ["", "Principal", "Root", "Senhas", "/"];
 
 pub fn run(db_path: &str, recipients: &[String]) -> Result<(), String> {
     if recipients.is_empty() {
-        return Err("Uso: fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]".to_string());
+        return Err(t!("cli.kdbx2pass_usage").to_string());
     }
 
     // 1. Garante que o password-store está inicializado pros destinatários certos.
@@ -32,15 +33,15 @@ pub fn run(db_path: &str, recipients: &[String]) -> Result<(), String> {
 
     // 2. Exporta o kdbx pra CSV (pede a senha mestra do kdbx uma vez).
     let password = Zeroizing::new(
-        rpassword::prompt_password(format!("Senha mestra de {}: ", db_path))
-            .map_err(|e| format!("Erro lendo senha: {}", e))?,
+        rpassword::prompt_password(t!("kdbx2pass.master_password_prompt", db = db_path).to_string())
+            .map_err(|e| t!("kdbx2pass.read_password_error", err = e).to_string())?,
     );
     let csv = export_kdbx_csv(db_path, &password)?;
 
     // 3. Faz o parse e importa cada entrada.
     let mut rows = parse_csv(&csv);
     if rows.is_empty() {
-        return Err("CSV exportado está vazio.".to_string());
+        return Err(t!("kdbx2pass.empty_csv").to_string());
     }
     let header = rows.remove(0);
     let col = |name: &str| header.iter().position(|h| h == name);
@@ -56,7 +57,7 @@ pub fn run(db_path: &str, recipients: &[String]) -> Result<(), String> {
         let raw_group = get(row, idx_group);
         let raw_group = raw_group.trim_matches('/').replace("/./", "/");
         let title = get(row, idx_title);
-        let title = if title.trim().is_empty() { "sem-titulo".to_string() } else { title.trim().to_string() };
+        let title = if title.trim().is_empty() { t!("kdbx2pass.no_title").to_string() } else { title.trim().to_string() };
         let username = get(row, idx_username);
         let entry_password = Zeroizing::new(get(row, idx_password));
         // A cópia em texto puro dentro de `row` já foi extraída acima;
@@ -84,11 +85,11 @@ pub fn run(db_path: &str, recipients: &[String]) -> Result<(), String> {
         if !url.is_empty() { content.push_str(&format!("\nurl: {}", url)); }
         if !notes.is_empty() { content.push_str(&format!("\nnotes: {}", notes)); }
 
-        println!("Importando: {}", entry_path);
+        println!("{}", t!("kdbx2pass.importing", entry = entry_path));
         run_pass_cmd(&["insert", "-m", "-f", &entry_path], Some(content.as_bytes()))?;
     }
 
-    println!("Conversão concluída. Revise com: pass");
+    println!("{}", t!("kdbx2pass.done"));
     Ok(())
 }
 
@@ -100,7 +101,7 @@ fn sanitize_title(title: &str) -> String {
         .map(|c| if c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ' ') { c } else { '_' })
         .collect();
     let trimmed = safe.trim();
-    if trimmed.is_empty() { "sem-titulo".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() { t!("kdbx2pass.no_title").to_string() } else { trimmed.to_string() }
 }
 
 fn export_kdbx_csv(db_path: &str, password: &str) -> Result<Zeroizing<String>, String> {
@@ -109,12 +110,12 @@ fn export_kdbx_csv(db_path: &str, password: &str) -> Result<Zeroizing<String>, S
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("Não foi possível executar keepassxc-cli: {}", e))?;
+    let mut child = cmd.spawn().map_err(|e| t!("keepass.spawn_error", err = e).to_string())?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(password.as_bytes());
         let _ = stdin.write_all(b"\n");
     }
-    let output = child.wait_with_output().map_err(|e| format!("Erro aguardando keepassxc-cli: {}", e))?;
+    let output = child.wait_with_output().map_err(|e| t!("keepass.wait_error", err = e).to_string())?;
     if output.status.success() {
         Ok(Zeroizing::new(String::from_utf8_lossy(&output.stdout).into_owned()))
     } else {
@@ -126,13 +127,13 @@ fn run_pass_cmd(args: &[&str], stdin_data: Option<&[u8]>) -> Result<(), String> 
     let mut cmd = Command::new("pass");
     cmd.args(args).stdout(Stdio::inherit()).stderr(Stdio::inherit());
     cmd.stdin(if stdin_data.is_some() { Stdio::piped() } else { Stdio::null() });
-    let mut child = cmd.spawn().map_err(|e| format!("Não foi possível executar 'pass': {}", e))?;
+    let mut child = cmd.spawn().map_err(|e| t!("pass.spawn_error", err = e).to_string())?;
     if let Some(data) = stdin_data {
-        let mut stdin = child.stdin.take().ok_or_else(|| "stdin indisponível".to_string())?;
-        stdin.write_all(data).map_err(|e| format!("Erro escrevendo no pass: {}", e))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| t!("pass.stdin_unavailable").to_string())?;
+        stdin.write_all(data).map_err(|e| t!("pass.stdin_write_error", err = e).to_string())?;
     }
-    let status = child.wait().map_err(|e| format!("Erro aguardando o pass: {}", e))?;
-    if status.success() { Ok(()) } else { Err(format!("'pass {}' falhou", args.join(" "))) }
+    let status = child.wait().map_err(|e| t!("pass.wait_error", err = e).to_string())?;
+    if status.success() { Ok(()) } else { Err(t!("kdbx2pass.pass_cmd_failed", cmd = args.join(" ")).to_string()) }
 }
 
 /// Parser de CSV no formato RFC4180: aspas duplas delimitam campos com
@@ -210,8 +211,9 @@ mod tests {
     #[test]
     fn sanitize_title_replaces_unsafe_chars() {
         assert_eq!(sanitize_title("Banco: Conta #1"), "Banco_ Conta _1");
-        assert_eq!(sanitize_title("  "), "sem-titulo");
-        assert_eq!(sanitize_title(""), "sem-titulo");
+        let no_title = t!("kdbx2pass.no_title").to_string();
+        assert_eq!(sanitize_title("  "), no_title);
+        assert_eq!(sanitize_title(""), no_title);
         assert_eq!(sanitize_title("café"), "café");
     }
 }

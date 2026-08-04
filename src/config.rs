@@ -12,6 +12,7 @@ struct RawGeneral {
     path: Option<String>,
     recency: Option<bool>,
     theme: Option<String>,
+    language: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -42,6 +43,7 @@ pub struct AppConfig {
     pub search_path: String,
     pub recency_enabled: bool,
     pub theme_name: String,
+    pub language: String,
 }
 
 #[derive(Clone)]
@@ -72,6 +74,28 @@ impl Theme {
     }
 }
 
+/// Resolve o idioma efetivo, em ordem de prioridade:
+/// 1. `language` explícito no config.toml (`"en"`/`"pt-BR"`), se preenchido;
+/// 2. autodetecção pelo locale do sistema (`$LANG`, com `$LC_ALL` como
+///    alternativa);
+/// 3. se nada foi configurado nem detectado, o padrão é inglês.
+pub fn resolve_language(configured: Option<&str>, lang_env: Option<&str>, lc_all_env: Option<&str>) -> String {
+    match configured {
+        Some("en") => return "en".to_string(),
+        Some("pt-BR") => return "pt-BR".to_string(),
+        _ => {}
+    }
+
+    let env_lang = lang_env.filter(|s| !s.is_empty()).or(lc_all_env.filter(|s| !s.is_empty()));
+    if let Some(v) = env_lang {
+        let v = v.to_lowercase();
+        if v.starts_with("pt") { return "pt-BR".to_string(); }
+        if v.starts_with("en") { return "en".to_string(); }
+    }
+
+    "en".to_string()
+}
+
 pub fn hex_to_color(hex: &str) -> Option<Color> {
     let hex = hex.trim_start_matches('#');
     if hex.len() == 6 {
@@ -94,8 +118,10 @@ pub fn setup_and_load_config() -> (AppConfig, Theme) {
         search_path: home.clone(),
         recency_enabled: true,
         theme_name: "default".to_string(),
+        language: "en".to_string(),
     };
 
+    let mut configured_language: Option<String> = None;
     let config_path = config_dir.join("config.toml");
     if let Ok(content) = fs::read_to_string(&config_path) {
         if let Ok(raw) = toml::from_str::<RawConfig>(&content) {
@@ -107,9 +133,15 @@ pub fn setup_and_load_config() -> (AppConfig, Theme) {
                 }
                 if let Some(r) = general_config.recency { config.recency_enabled = r; }
                 if let Some(t) = general_config.theme { config.theme_name = t; }
+                configured_language = general_config.language;
             }
         }
     }
+    config.language = resolve_language(
+        configured_language.as_deref(),
+        std::env::var("LANG").ok().as_deref(),
+        std::env::var("LC_ALL").ok().as_deref(),
+    );
 
     let mut theme = Theme::default();
     if config.theme_name != "default" {
@@ -151,6 +183,7 @@ pub fn ensure_config_exists(config_dir: &PathBuf) {
 path = "~/"
 recency = true
 theme = "default"
+language = "auto"
 "#;
         let _ = fs::write(config_path, default_config);
     }
@@ -180,5 +213,31 @@ mod tests {
     #[test]
     fn hex_to_color_rejects_invalid_digits() {
         assert_eq!(hex_to_color("#zzzzzz"), None);
+    }
+
+    #[test]
+    fn resolve_language_explicit_config_wins_over_env() {
+        assert_eq!(resolve_language(Some("en"), Some("pt_BR.UTF-8"), None), "en");
+        assert_eq!(resolve_language(Some("pt-BR"), Some("en_US.UTF-8"), None), "pt-BR");
+    }
+
+    #[test]
+    fn resolve_language_auto_detects_from_lang_env() {
+        assert_eq!(resolve_language(None, Some("en_US.UTF-8"), None), "en");
+        assert_eq!(resolve_language(Some("auto"), Some("en_GB.UTF-8"), None), "en");
+        assert_eq!(resolve_language(None, Some("pt_BR.UTF-8"), None), "pt-BR");
+        assert_eq!(resolve_language(Some("auto"), Some("pt_PT.UTF-8"), None), "pt-BR");
+    }
+
+    #[test]
+    fn resolve_language_falls_back_to_lc_all_when_lang_unset() {
+        assert_eq!(resolve_language(None, None, Some("pt_BR.UTF-8")), "pt-BR");
+        assert_eq!(resolve_language(None, Some(""), Some("en_US.UTF-8")), "en");
+    }
+
+    #[test]
+    fn resolve_language_defaults_to_english_when_nothing_detected() {
+        assert_eq!(resolve_language(None, None, None), "en");
+        assert_eq!(resolve_language(None, Some("fr_FR.UTF-8"), None), "en");
     }
 }
