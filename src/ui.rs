@@ -65,7 +65,8 @@ fn process_event(app: &mut App, event: Event) -> bool {
                 AppMode::ContextMenu => handle_context_menu_key(app, key.code),
                 AppMode::Help => handle_help_key(app, key.code),
                 AppMode::RenameGroup => handle_rename_group_key(app, key.code),
-                AppMode::PasswordInput | AppMode::ConfirmCreateDb | AppMode::CreateDb => {}
+                AppMode::PasswordInput | AppMode::ConfirmCreateDb | AppMode::CreateDb
+                | AppMode::ChooseDbType | AppMode::CreatePassStore => {}
             }
             app.last_key_was_g = is_g_key;
             false

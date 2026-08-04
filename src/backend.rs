@@ -3,8 +3,8 @@
 //! ui.rs) fala apenas com `Backend`/`DbRef`, sem repetir a lógica de comandos
 //! de cada gerenciador.
 
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use zeroize::Zeroizing;
 
 use crate::keepass::{self, run_kpcli};
@@ -287,39 +287,48 @@ impl Backend {
     }
 }
 
-/// Busca bancos de dados KeePassXC (.kdbx) em `search_path` e stores do pass
-/// dentro de `~/.password-store`.
+/// Busca bancos de dados KeePassXC (.kdbx) e stores do `pass` (qualquer
+/// diretório com `.gpg-id`) dentro de `search_path` — o mesmo diretório
+/// configurável usado para os .kdbx, então um store do pass em qualquer
+/// lugar sob ele (não só o `~/.password-store` convencional) é encontrado.
 pub fn find_databases(search_path: &str) -> Vec<DbRef> {
     let mut dbs: Vec<DbRef> = keepass::find_databases(search_path)
         .into_iter()
         .map(|p| DbRef { path: p, kind: BackendKind::Keepass })
         .collect();
 
+    let mut pass_roots = find_pass_stores(search_path);
+
+    // O local convencional é sempre considerado, mesmo que `search_path`
+    // tenha sido customizado para não incluí-lo.
     let home = std::env::var("HOME").unwrap_or_default();
-    let store_root = PathBuf::from(format!("{}/.password-store", home));
-    let mut pass_roots = Vec::new();
-    find_pass_stores(&store_root, &mut pass_roots);
+    let default_store = PathBuf::from(format!("{}/.password-store", home));
+    if default_store.join(".gpg-id").exists() && !pass_roots.contains(&default_store) {
+        pass_roots.push(default_store);
+    }
+
     dbs.extend(pass_roots.into_iter().map(|p| DbRef { path: p.to_string_lossy().into_owned(), kind: BackendKind::Pass }));
 
     dbs
 }
 
-/// Procura diretórios com `.gpg-id`: cada um é um password-store do `pass`.
-/// Não desce dentro de um diretório já identificado como store — tudo que
-/// há ali pertence a ele, não são stores independentes.
-fn find_pass_stores(dir: &Path, out: &mut Vec<PathBuf>) {
-    if !dir.is_dir() {
-        return;
-    }
-    if dir.join(".gpg-id").exists() {
-        out.push(dir.to_path_buf());
-        return;
-    }
-    let Ok(read) = fs::read_dir(dir) else { return; };
-    for item in read.flatten() {
-        let path = item.path();
-        if path.is_dir() {
-            find_pass_stores(&path, out);
+/// Procura arquivos `.gpg-id` (via `fd`, igual à busca de .kdbx) — o
+/// diretório pai de cada um é a raiz de um password-store do `pass`. Um
+/// `.gpg-id` de escopo próprio dentro de um store já encontrado não vira um
+/// banco à parte: só a raiz mais externa é mantida.
+fn find_pass_stores(search_path: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(output) = Command::new("fd").args(["--hidden", "--no-ignore", "^\\.gpg-id$", search_path]).output() {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let line = line.trim();
+            if line.is_empty() { continue; }
+            if let Some(parent) = Path::new(line).parent() {
+                roots.push(parent.to_path_buf());
+            }
         }
     }
+    roots.sort();
+    roots.dedup();
+    let outer = roots.clone();
+    roots.into_iter().filter(|r| !outer.iter().any(|other| other != r && r.starts_with(other))).collect()
 }

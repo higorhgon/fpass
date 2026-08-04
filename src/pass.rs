@@ -71,6 +71,57 @@ fn run_pass(
     }
 }
 
+/// Lista as chaves secretas do chaveiro GPG local, como pares
+/// (keyid, identidade), para o usuário escolher a quem um novo
+/// password-store deve encriptar. Uma chave com múltiplos UIDs aparece uma
+/// única vez (o primeiro/identidade principal).
+pub fn list_secret_keys() -> Vec<(String, String)> {
+    let Ok(output) = Command::new("gpg").args(["--list-secret-keys", "--with-colons"]).output() else {
+        return Vec::new();
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut keys = Vec::new();
+    let mut current: Option<String> = None;
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        match fields.first() {
+            Some(&"sec") => current = fields.get(4).map(|s| s.to_string()),
+            Some(&"uid") => {
+                if let Some(keyid) = current.take() {
+                    let uid = fields.get(9).copied().unwrap_or("").to_string();
+                    keys.push((keyid, uid));
+                }
+            }
+            _ => {}
+        }
+    }
+    keys
+}
+
+/// Inicializa um novo password-store em `root` para a chave `gpg_id`, via
+/// `pass init` (que grava o `.gpg-id` e recriptografa o que já existir —
+/// inofensivo aqui, já que o store recém-criado está vazio).
+pub fn init_store(root: &Path, gpg_id: &str) -> Result<(), String> {
+    if root.join(".gpg-id").exists() {
+        return Err(format!("Já existe um password-store em {}.", root.display()));
+    }
+    fs::create_dir_all(root).map_err(|e| format!("Erro criando diretório: {}", e))?;
+
+    let output = Command::new("pass")
+        .args(["init", gpg_id])
+        .env("PASSWORD_STORE_DIR", root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("Não foi possível executar 'pass': {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}
+
 impl PassStore {
     /// Abre um store já localizado em `root` (a busca por diretórios com
     /// `.gpg-id` é feita em `backend::find_databases`).

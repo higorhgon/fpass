@@ -33,6 +33,8 @@ pub enum AppMode {
     ContextMenu,
     Help,
     RenameGroup,
+    ChooseDbType,
+    CreatePassStore,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
