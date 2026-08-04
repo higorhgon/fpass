@@ -410,7 +410,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
     f.render_widget(Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL).style(Style::default().fg(app.theme.guidance))).alignment(Alignment::Center), chunks[2]);
 
     if app.mode == AppMode::PasswordInput {
-        let modal_area = centered_fixed_rect(50, 7, f.size());
+        let modal_area = centered_fixed_rect(70, 7, f.size());
         f.render_widget(Clear, modal_area);
 
         let db_name = app.selected_db.as_ref().map(|d| d.path.as_str()).unwrap_or("");
@@ -433,7 +433,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
 
         let input_chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(10), Constraint::Percentage(80), Constraint::Percentage(10)])
+            .constraints([Constraint::Percentage(4), Constraint::Percentage(92), Constraint::Percentage(4)])
             .split(chunks[1]);
 
         let hidden_pw: String = app.password_input.chars().map(|_| '*').collect();
