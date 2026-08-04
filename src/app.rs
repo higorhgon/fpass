@@ -1,3 +1,4 @@
+use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use std::time::Instant;
 use zeroize::Zeroizing;
@@ -7,6 +8,42 @@ use crate::history::History;
 use crate::keepass::{self, run_kpcli};
 use crate::util::filter_items;
 use crate::AppMode;
+
+/// Uma posição de texto dentro de um campo do modal de informações,
+/// endereçada como (linha, coluna) em índices de caracteres (não bytes).
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TextPos {
+    pub line: usize,
+    pub col: usize,
+}
+
+/// Seleção de texto em um campo do modal de informações: âncora (onde o
+/// clique começou) e cursor (posição atual, seguindo o arrasto do mouse).
+/// `anchor == cursor` significa "sem seleção".
+#[derive(Clone, Copy, Default)]
+pub struct TextSelection {
+    pub anchor: TextPos,
+    pub cursor: TextPos,
+}
+
+impl TextSelection {
+    pub fn is_empty(&self) -> bool {
+        self.anchor == self.cursor
+    }
+
+    /// Retorna (início, fim) normalizados (início <= fim).
+    pub fn normalized(&self) -> (TextPos, TextPos) {
+        if self.anchor <= self.cursor { (self.anchor, self.cursor) } else { (self.cursor, self.anchor) }
+    }
+}
+
+/// Ações disponíveis no menu de contexto (clique com botão direito).
+#[derive(Clone, Copy)]
+pub enum ContextAction {
+    AddNew,
+    Edit,
+    Delete,
+}
 
 pub struct App {
     pub db_path: String,
@@ -33,6 +70,39 @@ pub struct App {
     pub form_username: String,
     pub form_password: Zeroizing<String>,
     pub form_url: String,
+
+    // Retângulos calculados no último desenho da tela, usados para
+    // converter cliques/eventos de mouse em posições lógicas da UI.
+    pub term_size: Rect,
+    pub search_rect: Rect,
+    pub list_inner_rect: Rect,
+    pub form_rect: Rect,
+    pub confirm_delete_rect: Rect,
+    pub last_click: Option<(Instant, usize)>,
+
+    // Menu de contexto (clique com botão direito)
+    pub context_menu_anchor: (u16, u16),
+    pub context_menu_rect: Rect,
+    pub context_menu_item_rects: Vec<Rect>,
+    pub context_menu_prev_mode: AppMode,
+    pub context_menu_selected: usize,
+
+    // Item da lista sob o cursor do mouse (destaque de hover, distinto da
+    // seleção real navegada por teclado).
+    pub hover_index: Option<usize>,
+
+    // Modal de informações da entrada (TAB)
+    pub info_title: String,
+    pub info_url: String,
+    pub info_notes: String,
+    pub info_active_field: usize,
+    pub info_field_rects: [Rect; 3],
+    pub info_selection: [TextSelection; 3],
+    pub info_dragging: bool,
+    pub info_drag_field: Option<usize>,
+    pub info_notes_scroll: usize,
+    pub info_modal_rect: Rect,
+    pub info_previous_mode: AppMode,
 }
 
 impl App {
@@ -44,6 +114,14 @@ impl App {
             form_is_edit: false, form_original_path: String::new(), form_active_field: 0,
             form_group: String::new(), form_title: String::new(), form_username: String::new(),
             form_password: Zeroizing::new(String::new()), form_url: String::new(),
+            term_size: Rect::default(), search_rect: Rect::default(), list_inner_rect: Rect::default(),
+            form_rect: Rect::default(), confirm_delete_rect: Rect::default(), last_click: None,
+            context_menu_anchor: (0, 0), context_menu_rect: Rect::default(), context_menu_item_rects: vec![],
+            context_menu_prev_mode: AppMode::Normal, context_menu_selected: 0, hover_index: None,
+            info_title: String::new(), info_url: String::new(), info_notes: String::new(),
+            info_active_field: 0, info_field_rects: [Rect::default(); 3], info_selection: [TextSelection::default(); 3],
+            info_dragging: false, info_drag_field: None, info_notes_scroll: 0, info_modal_rect: Rect::default(),
+            info_previous_mode: AppMode::Normal,
         };
         app.refresh_entries();
         app
@@ -80,9 +158,92 @@ impl App {
         self.list_state.select(if self.filtered.is_empty() { None } else { Some(0) });
     }
 
+    pub fn open_info_modal(&mut self) {
+        let Some(entry) = self.get_selected() else { return; };
+        if entry.ends_with("/[vazio]") { self.set_msg("Isso é um grupo vazio!", true); return; }
+
+        let mut title = self.fetch_field(&entry, "Title");
+        if title.trim().is_empty() {
+            title = entry.rsplit('/').next().unwrap_or(&entry).to_string();
+        }
+        self.info_title = title;
+        self.info_url = self.fetch_field(&entry, "URL");
+        self.info_notes = self.fetch_field(&entry, "Notes");
+        self.info_active_field = 0;
+        self.info_selection = [TextSelection::default(); 3];
+        self.info_notes_scroll = 0;
+        self.info_dragging = false;
+        self.info_drag_field = None;
+        self.info_previous_mode = self.mode;
+        self.hover_index = None;
+        self.mode = AppMode::Info;
+    }
+
+    /// Linhas do campo "Notas", divididas por quebra de linha explícita.
+    pub fn info_notes_lines(&self) -> Vec<&str> {
+        if self.info_notes.is_empty() { vec![""] } else { self.info_notes.split('\n').collect() }
+    }
+
+    fn info_field_line(&self, field: usize, line_idx: usize) -> &str {
+        match field {
+            0 => self.info_title.as_str(),
+            1 => self.info_url.as_str(),
+            _ => self.info_notes_lines().get(line_idx).copied().unwrap_or(""),
+        }
+    }
+
+    fn info_field_line_count(&self, field: usize) -> usize {
+        if field == 2 { self.info_notes_lines().len() } else { 1 }
+    }
+
+    /// Converte uma posição de mouse (coluna/linha do terminal) dentro do
+    /// retângulo de um campo em uma posição lógica (linha, coluna) no texto.
+    pub fn info_hit_to_pos(&self, field: usize, column: u16, row: u16) -> TextPos {
+        let rect = self.info_field_rects[field];
+        let rel_row = row.saturating_sub(rect.y) as usize;
+        let rel_col = column.saturating_sub(rect.x) as usize;
+        let scroll = if field == 2 { self.info_notes_scroll } else { 0 };
+        let max_line = self.info_field_line_count(field).saturating_sub(1);
+        let line = (scroll + rel_row).min(max_line);
+        let col = rel_col.min(self.info_field_line(field, line).chars().count());
+        TextPos { line, col }
+    }
+
+    /// Extrai o texto atualmente selecionado em um campo do modal de informações.
+    pub fn info_selected_text(&self, field: usize) -> String {
+        let sel = self.info_selection[field];
+        if sel.is_empty() { return String::new(); }
+        let (start, end) = sel.normalized();
+        let mut out = String::new();
+        for line_idx in start.line..=end.line {
+            let chars: Vec<char> = self.info_field_line(field, line_idx).chars().collect();
+            let s = if line_idx == start.line { start.col.min(chars.len()) } else { 0 };
+            let e = if line_idx == end.line { end.col.min(chars.len()) } else { chars.len() };
+            out.push_str(&chars[s..e].iter().collect::<String>());
+            if line_idx != end.line { out.push('\n'); }
+        }
+        out
+    }
+
+    /// Finaliza um arrasto de seleção no modal de informações: se algo foi
+    /// selecionado, copia o texto para a área de transferência. Selecionar é
+    /// feito inteiramente pela própria aplicação (não pelo terminal) para
+    /// evitar que bordas dos campos sejam copiadas junto com o conteúdo.
+    pub fn info_finish_drag(&mut self) {
+        let Some(field) = self.info_drag_field.take() else { return; };
+        self.info_dragging = false;
+        let text = self.info_selected_text(field);
+        if text.is_empty() { return; }
+        match keepass::copy_to_clipboard(&text, self.is_mac) {
+            Ok(()) => self.set_msg("Copiado para a área de transferência!", false),
+            Err(_) => self.set_msg("Erro ao copiar.", true),
+        }
+    }
+
     pub fn open_add_form(&mut self) {
         self.form_is_edit = false; self.form_group.clear(); self.form_title.clear(); self.form_username.clear();
         self.form_password = Zeroizing::new(String::new()); self.form_url.clear(); self.form_active_field = 0; self.mode = AppMode::Form;
+        self.hover_index = None;
         self.filter_form_groups();
     }
 
@@ -93,7 +254,43 @@ impl App {
         self.form_username = self.fetch_field(&entry, "UserName");
         self.form_password = Zeroizing::new(self.fetch_field(&entry, "Password"));
         self.form_url = self.fetch_field(&entry, "URL");
-        self.form_active_field = 3; self.mode = AppMode::Form; self.filter_form_groups();
+        self.form_active_field = 3; self.mode = AppMode::Form; self.hover_index = None; self.filter_form_groups();
+    }
+
+    /// Abre o menu de contexto pela tecla de espaço, ancorado próximo à
+    /// entrada atualmente selecionada na lista (em vez da posição do mouse).
+    pub fn open_context_menu(&mut self) {
+        self.context_menu_prev_mode = if self.mode == AppMode::Search { AppMode::Search } else { AppMode::Normal };
+        self.context_menu_selected = 0;
+        self.hover_index = None;
+        let rect = self.list_inner_rect;
+        let row = match self.list_state.selected() {
+            Some(idx) => rect.y + idx.saturating_sub(self.list_state.offset()) as u16,
+            None => rect.y,
+        };
+        self.context_menu_anchor = (rect.x + 2, row.min(rect.y + rect.height.saturating_sub(1)));
+        self.mode = AppMode::ContextMenu;
+    }
+
+    pub fn context_menu_next(&mut self) { self.context_menu_selected = (self.context_menu_selected + 1) % 3; }
+    pub fn context_menu_prev(&mut self) { self.context_menu_selected = if self.context_menu_selected == 0 { 2 } else { self.context_menu_selected - 1 }; }
+
+    /// Executa a ação escolhida no menu de contexto (clique com botão direito
+    /// ou ENTER com o teclado). Volta ao modo anterior à abertura do menu
+    /// (Normal ou Busca).
+    pub fn context_menu_action(&mut self, action: ContextAction) {
+        self.mode = self.context_menu_prev_mode;
+        match action {
+            ContextAction::AddNew => self.open_add_form(),
+            ContextAction::Edit => {
+                if let Some(entry) = self.get_selected() { self.open_edit_form(entry); }
+                else { self.set_msg("Nenhuma entrada selecionada.", true); }
+            }
+            ContextAction::Delete => {
+                if self.get_selected().is_some() { self.hover_index = None; self.mode = AppMode::ConfirmDelete; }
+                else { self.set_msg("Nenhuma entrada selecionada.", true); }
+            }
+        }
     }
 
     fn fetch_field(&self, path: &str, field: &str) -> String {

@@ -26,6 +26,8 @@ pub enum AppMode {
     PasswordInput,
     ConfirmCreateDb,
     CreateDb,
+    Info,
+    ContextMenu,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
