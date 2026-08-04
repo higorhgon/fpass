@@ -47,6 +47,8 @@ pub struct DbApp {
     pub create_pass_active_field: usize,
     pub create_pass_keys: Vec<(String, String)>,
     pub create_pass_key_state: ListState,
+    pub create_pass_dir_suggestions: Vec<String>,
+    pub create_pass_dir_state: ListState,
 }
 
 impl DbApp {
@@ -62,6 +64,7 @@ impl DbApp {
             choose_db_type_selected: 0,
             create_pass_dir: String::new(), create_pass_active_field: 0,
             create_pass_keys: Vec::new(), create_pass_key_state: ListState::default(),
+            create_pass_dir_suggestions: Vec::new(), create_pass_dir_state: ListState::default(),
         };
         if !app.filtered.is_empty() { app.list_state.select(Some(0)); }
 
@@ -109,6 +112,58 @@ impl DbApp {
         self.create_pass_key_state.select(if self.create_pass_keys.is_empty() { None } else { Some(0) });
         self.error_msg = None;
         self.mode = AppMode::CreatePassStore;
+        self.filter_create_pass_dir();
+    }
+
+    /// Recalcula as sugestões de autocompletar do campo Diretório: os
+    /// subdiretórios do último segmento em construção (ex.: digitar
+    /// "/home/user/.pas" sugere pastas que começam com "pas" dentro de
+    /// "/home/user/"), ignorando ocultos.
+    fn filter_create_pass_dir(&mut self) {
+        let path = self.create_pass_dir.clone();
+        let (parent, partial) = match path.rfind('/') {
+            Some(idx) => (path[..=idx].to_string(), path[idx + 1..].to_string()),
+            None => (String::new(), path.clone()),
+        };
+        let parent_dir = if parent.is_empty() { std::path::PathBuf::from(".") } else { std::path::PathBuf::from(&parent) };
+
+        let mut matches = Vec::new();
+        if let Ok(read) = std::fs::read_dir(&parent_dir) {
+            let partial_lower = partial.to_lowercase();
+            for item in read.flatten() {
+                let Ok(is_dir) = item.file_type().map(|t| t.is_dir()) else { continue; };
+                if !is_dir { continue; }
+                let Some(name) = item.file_name().to_str().map(str::to_string) else { continue; };
+                if name.starts_with('.') { continue; }
+                if name.to_lowercase().starts_with(&partial_lower) {
+                    matches.push(format!("{}{}", parent, name));
+                }
+            }
+        }
+        matches.sort();
+        self.create_pass_dir_suggestions = matches;
+        self.create_pass_dir_state.select(if self.create_pass_dir_suggestions.is_empty() { None } else { Some(0) });
+    }
+
+    fn create_pass_dir_next(&mut self) {
+        if self.create_pass_dir_suggestions.is_empty() { return; }
+        let i = match self.create_pass_dir_state.selected() { Some(i) => if i >= self.create_pass_dir_suggestions.len() - 1 { 0 } else { i + 1 }, None => 0 };
+        self.create_pass_dir_state.select(Some(i));
+    }
+    fn create_pass_dir_prev(&mut self) {
+        if self.create_pass_dir_suggestions.is_empty() { return; }
+        let i = match self.create_pass_dir_state.selected() { Some(i) => if i == 0 { self.create_pass_dir_suggestions.len() - 1 } else { i - 1 }, None => 0 };
+        self.create_pass_dir_state.select(Some(i));
+    }
+
+    /// Aplica a sugestão destacada ao campo Diretório (com "/" ao final, para
+    /// continuar completando o próximo segmento) e recalcula as sugestões.
+    /// Retorna `false` se não havia nenhuma sugestão para aplicar.
+    fn accept_create_pass_dir_suggestion(&mut self) -> bool {
+        let Some(idx) = self.create_pass_dir_state.selected() else { return false; };
+        self.create_pass_dir = format!("{}/", self.create_pass_dir_suggestions[idx]);
+        self.filter_create_pass_dir();
+        true
     }
 
     fn create_pass_key_next(&mut self) {
@@ -205,17 +260,24 @@ pub fn run_selection_tui(dbs: Vec<DbRef>, theme: Theme) -> Result<Option<Backend
                     AppMode::CreatePassStore => match key.code {
                         KeyCode::Esc => app.mode = AppMode::ChooseDbType,
                         KeyCode::Tab | KeyCode::BackTab => { app.create_pass_active_field = 1 - app.create_pass_active_field; }
+                        KeyCode::Down if app.create_pass_active_field == 0 => app.create_pass_dir_next(),
+                        KeyCode::Up if app.create_pass_active_field == 0 => app.create_pass_dir_prev(),
                         KeyCode::Down | KeyCode::Char('j') if app.create_pass_active_field == 1 => app.create_pass_key_next(),
                         KeyCode::Up | KeyCode::Char('k') if app.create_pass_active_field == 1 => app.create_pass_key_prev(),
                         KeyCode::Enter => {
                             if app.create_pass_active_field == 0 {
-                                app.create_pass_active_field = 1;
+                                // Se houver uma sugestão de pasta destacada, completa o
+                                // segmento em vez de avançar — TAB continua disponível
+                                // para ir direto ao campo da chave GPG.
+                                if !app.accept_create_pass_dir_suggestion() {
+                                    app.create_pass_active_field = 1;
+                                }
                             } else {
                                 app.submit_create_pass_store();
                             }
                         }
-                        KeyCode::Backspace if app.create_pass_active_field == 0 => { app.create_pass_dir.pop(); app.error_msg = None; }
-                        KeyCode::Char(c) if app.create_pass_active_field == 0 => { app.create_pass_dir.push(c); app.error_msg = None; }
+                        KeyCode::Backspace if app.create_pass_active_field == 0 => { app.create_pass_dir.pop(); app.error_msg = None; app.filter_create_pass_dir(); }
+                        KeyCode::Char(c) if app.create_pass_active_field == 0 => { app.create_pass_dir.push(c); app.error_msg = None; app.filter_create_pass_dir(); }
                         _ => {}
                     },
                     AppMode::CreateDb => match key.code {
@@ -322,7 +384,7 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         AppMode::ConfirmCreateDb => "y: Sim | n/N: Não",
         AppMode::CreateDb => "TAB: Navegar | ENTER: Criar | ESC: Cancelar",
         AppMode::ChooseDbType => "j/k: Navegar | ENTER: Confirmar | ESC: Cancelar",
-        AppMode::CreatePassStore => "TAB: Navegar | ENTER: Confirmar | ESC: Voltar",
+        AppMode::CreatePassStore => "TAB: Navegar | ENTER: Completar/Confirmar | ESC: Voltar",
         AppMode::PasswordInput => "ENTER: Confirmar | ESC: Cancelar",
         AppMode::Help => "ESC: Fechar",
         _ => "ENTER: Selecionar | CTRL+A: Novo | CTRL+?: Ajuda | ESC/q: Sair",
@@ -434,7 +496,13 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
     }
 
     if app.mode == AppMode::CreatePassStore {
-        let modal_area = centered_fixed_rect(60, 16, f.size());
+        // Soma dos Constraint::Length abaixo (Diretório 3 + Dropdown 0/5 +
+        // Chave GPG 8 + footer 1) + 2 linhas de borda do modal. Ver o bug do
+        // formulário de pass (draw_form_modal_pass) sobre por que isso tem
+        // que bater exatamente: um valor menor encolhe o primeiro bloco.
+        let show_dir_dropdown = app.create_pass_active_field == 0 && !app.create_pass_dir_suggestions.is_empty();
+        let height = if show_dir_dropdown { 19 } else { 14 };
+        let modal_area = centered_fixed_rect(60, height, f.size());
         f.render_widget(Clear, modal_area);
 
         let modal_block = Block::default().title(" Novo Password Store (pass) ").borders(Borders::ALL).border_style(Style::default().fg(app.theme.alert_info));
@@ -443,20 +511,30 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let inner_area = modal_block.inner(modal_area);
         let chunks = Layout::default().direction(Direction::Vertical).constraints([
             Constraint::Length(3), // Diretório
-            Constraint::Min(3),    // Chave GPG
+            Constraint::Length(if show_dir_dropdown { 5 } else { 0 }), // Sugestões de pastas
+            Constraint::Length(8), // Chave GPG
             Constraint::Length(1), // Footer/Erro
         ]).split(inner_area);
 
+        let dir_rect = chunks[0].union(chunks[1]);
         let dir_color = if app.create_pass_active_field == 0 { app.theme.annotation } else { app.theme.base };
-        let dir_field = Paragraph::new(format!(" {}{}", app.create_pass_dir, if app.create_pass_active_field == 0 { "█" } else { "" }))
-            .block(Block::default().title(" Diretório ").borders(Borders::ALL).style(Style::default().fg(dir_color)));
-        f.render_widget(dir_field, chunks[0]);
+        let dir_block = Block::default().title(" Diretório ").borders(Borders::ALL).border_style(Style::default().fg(dir_color));
+        f.render_widget(dir_block, dir_rect);
+        f.render_widget(Paragraph::new(format!(" {}{}", app.create_pass_dir, if app.create_pass_active_field == 0 { "█" } else { "" })), Rect::new(dir_rect.x + 1, dir_rect.y + 1, dir_rect.width.saturating_sub(2), 1));
+
+        if show_dir_dropdown {
+            let items: Vec<ListItem> = app.create_pass_dir_suggestions.iter().map(|s| {
+                ListItem::new(s.rsplit('/').next().unwrap_or(s.as_str()))
+            }).collect();
+            let list = List::new(items).block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(dir_color))).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol("> ");
+            f.render_stateful_widget(list, Rect::new(dir_rect.x + 1, dir_rect.y + 2, dir_rect.width.saturating_sub(2), dir_rect.height.saturating_sub(3)), &mut app.create_pass_dir_state);
+        }
 
         let key_color = if app.create_pass_active_field == 1 { app.theme.annotation } else { app.theme.base };
         let key_block = Block::default().title(" Chave GPG ").borders(Borders::ALL).border_style(Style::default().fg(key_color));
         if app.create_pass_keys.is_empty() {
-            let inner = key_block.inner(chunks[1]);
-            f.render_widget(key_block, chunks[1]);
+            let inner = key_block.inner(chunks[2]);
+            f.render_widget(key_block, chunks[2]);
             f.render_widget(
                 Paragraph::new("Nenhuma chave GPG encontrada.\nCrie uma com: gpg --full-generate-key")
                     .style(Style::default().fg(app.theme.alert_warn)),
@@ -465,15 +543,15 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         } else {
             let items: Vec<ListItem> = app.create_pass_keys.iter().map(|(id, uid)| ListItem::new(format!("{} {}", id, uid))).collect();
             let list = List::new(items).block(key_block).highlight_style(Style::default().add_modifier(Modifier::REVERSED)).highlight_symbol("> ");
-            f.render_stateful_widget(list, chunks[1], &mut app.create_pass_key_state);
+            f.render_stateful_widget(list, chunks[2], &mut app.create_pass_key_state);
         }
 
         let (footer_text, footer_color) = if let Some(err) = &app.error_msg {
             (err.as_str(), app.theme.alert_error)
         } else {
-            ("TAB: Navegar | ENTER: Confirmar | ESC: Voltar", app.theme.guidance)
+            ("TAB: Navegar | ENTER: Completar/Confirmar | ESC: Voltar", app.theme.guidance)
         };
-        f.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center).style(Style::default().fg(footer_color)), chunks[2]);
+        f.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center).style(Style::default().fg(footer_color)), chunks[3]);
     }
 
     if app.mode == AppMode::Help {
