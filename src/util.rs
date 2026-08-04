@@ -41,6 +41,17 @@ pub fn scroll_tail(text: &str, width: usize) -> String {
     }
 }
 
+/// Glifo de cursor para campos de senha mascarados, alternando conforme a
+/// paridade de `len` (o tamanho atual do valor digitado). Um campo mascarado
+/// só mostra asteriscos idênticos, então uma vez que a caixa enche e passa a
+/// rolar (`scroll_tail`), digitar mais um caractere não muda visualmente
+/// nada — a janela desliza sobre um texto que parece igual em qualquer
+/// posição. Alternar o glifo do cursor a cada tecla dá o "isso mudou" que a
+/// rolagem sozinha não consegue dar nesse caso.
+pub fn mask_cursor(len: usize) -> char {
+    if len % 2 == 0 { '█' } else { '▓' }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,5 +112,11 @@ mod tests {
     fn scroll_tail_keeps_only_the_end_when_overflowing() {
         assert_eq!(scroll_tail("abcdef", 3), "def");
         assert_eq!(scroll_tail("abcdef█", 4), "def█");
+    }
+
+    #[test]
+    fn mask_cursor_alternates_with_each_char_typed() {
+        let glyphs: Vec<char> = (0..4).map(mask_cursor).collect();
+        assert_eq!(glyphs, vec!['█', '▓', '█', '▓']);
     }
 }

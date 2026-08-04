@@ -19,7 +19,7 @@ use crate::backend::{Backend, BackendKind, DbRef};
 use crate::config::Theme;
 use crate::keepass;
 use crate::pass;
-use crate::util::{centered_fixed_rect, scroll_tail};
+use crate::util::{centered_fixed_rect, mask_cursor, scroll_tail};
 use crate::AppMode;
 
 pub struct DbApp {
@@ -439,7 +439,8 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
         let hidden_pw: String = app.password_input.chars().map(|_| '*').collect();
         let input_border_color = if app.error_msg.is_some() { app.theme.alert_error } else { app.theme.title };
 
-        let input_text = scroll_tail(&format!(" {}█", hidden_pw), input_chunks[1].width.saturating_sub(2) as usize);
+        let cursor = mask_cursor(app.password_input.chars().count());
+        let input_text = scroll_tail(&format!(" {}{}", hidden_pw, cursor), input_chunks[1].width.saturating_sub(2) as usize);
         let input_field = Paragraph::new(input_text)
             .block(Block::default().borders(Borders::ALL).style(Style::default().fg(input_border_color)));
 
@@ -483,7 +484,8 @@ fn draw_selection_ui(f: &mut Frame, app: &mut DbApp) {
 
         let pass_color = if app.create_db_active_field == 1 { app.theme.annotation } else { app.theme.base };
         let hidden_pw: String = app.new_db_password.chars().map(|_| '*').collect();
-        let pass_text = scroll_tail(&format!(" {}{}", hidden_pw, if app.create_db_active_field == 1 { "█" } else { "" }), chunks[1].width.saturating_sub(2) as usize);
+        let pass_cursor = if app.create_db_active_field == 1 { mask_cursor(app.new_db_password.chars().count()).to_string() } else { String::new() };
+        let pass_text = scroll_tail(&format!(" {}{}", hidden_pw, pass_cursor), chunks[1].width.saturating_sub(2) as usize);
         let pass_field = Paragraph::new(pass_text)
             .block(Block::default().title(" Senha do Banco ").borders(Borders::ALL).style(Style::default().fg(pass_color)));
         f.render_widget(pass_field, chunks[1]);

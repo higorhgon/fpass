@@ -11,7 +11,7 @@ use std::{io, time::{Duration, Instant}};
 
 use crate::app::{App, ContextAction, TextSelection};
 use crate::backend::BackendKind;
-use crate::util::{centered_fixed_rect, scroll_tail};
+use crate::util::{centered_fixed_rect, mask_cursor, scroll_tail};
 use crate::AppMode;
 
 /// Distância máxima (em tempo) entre dois cliques no mesmo item para que
@@ -590,7 +590,8 @@ fn draw_form_modal(f: &mut Frame, app: &mut App) {
     f.render_widget(Paragraph::new(user_text).block(Block::default().title(" Usuário ").borders(Borders::ALL).style(Style::default().fg(user_color))), form_chunks[3]);
     let pass_color = if app.form_active_field == 3 { app.theme.annotation } else { app.theme.base };
     let hidden: String = app.form_password.chars().map(|_| '*').collect();
-    let pass_text = scroll_tail(&format!(" {}{}", hidden, if app.form_active_field == 3 { "█" } else { "" }), form_chunks[4].width.saturating_sub(2) as usize);
+    let pass_cursor = if app.form_active_field == 3 { mask_cursor(app.form_password.chars().count()).to_string() } else { String::new() };
+    let pass_text = scroll_tail(&format!(" {}{}", hidden, pass_cursor), form_chunks[4].width.saturating_sub(2) as usize);
     f.render_widget(Paragraph::new(pass_text).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[4]);
     let url_color = if app.form_active_field == 4 { app.theme.annotation } else { app.theme.base };
     let url_text = scroll_tail(&format!(" {}{}", app.form_url, if app.form_active_field == 4 { "█" } else { "" }), form_chunks[5].width.saturating_sub(2) as usize);
@@ -647,7 +648,8 @@ fn draw_form_modal_pass(f: &mut Frame, app: &mut App, show_dropdown: bool) {
 
     let pass_color = if app.form_active_field == 2 { app.theme.annotation } else { app.theme.base };
     let hidden: String = app.form_password.chars().map(|_| '*').collect();
-    let pass_text = scroll_tail(&format!(" {}{}", hidden, if app.form_active_field == 2 { "█" } else { "" }), form_chunks[3].width.saturating_sub(2) as usize);
+    let pass_cursor = if app.form_active_field == 2 { mask_cursor(app.form_password.chars().count()).to_string() } else { String::new() };
+    let pass_text = scroll_tail(&format!(" {}{}", hidden, pass_cursor), form_chunks[3].width.saturating_sub(2) as usize);
     f.render_widget(Paragraph::new(pass_text).block(Block::default().title(" Senha ").borders(Borders::ALL).style(Style::default().fg(pass_color))), form_chunks[3]);
 
     f.render_widget(Paragraph::new("TAB/SHIFT-TAB: Navegar | ENTER: Confirmar").alignment(Alignment::Center).style(Style::default().fg(app.theme.guidance)), form_chunks[5]);
