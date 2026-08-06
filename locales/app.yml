@@ -4,8 +4,8 @@ cli.version:
   pt-BR: "fpass versão %{version}"
   en: "fpass version %{version}"
 cli.help_title:
-  pt-BR: "fpass - Gerenciador de senhas TUI para KeePassXC e pass"
-  en: "fpass - TUI password manager for KeePassXC and pass"
+  pt-BR: "fpass - Gerenciador de senhas para KeePassXC e pass"
+  en: "fpass - Password manager for KeePassXC and pass"
 cli.help_usage_header:
   pt-BR: "Uso:"
   en: "Usage:"
@@ -250,6 +250,9 @@ db_app.footer_normal:
 db_app.unlock_title:
   pt-BR: " Desbloquear: %{db} "
   en: " Unlock: %{db} "
+db_app.unlocking:
+  pt-BR: "Desbloqueando…"
+  en: "Unlocking…"
 db_app.no_db_found_confirm:
   pt-BR: "\nNenhum banco de dados encontrado.\nDeseja criar um banco de dados? [y/N]"
   en: "\nNo database found.\nDo you want to create a database? [y/N]"
@@ -325,8 +328,11 @@ ui.rename_group_title:
   pt-BR: " Renomear Grupo "
   en: " Rename Group "
 ui.footer_form_full:
-  pt-BR: "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar (Notas: quebra linha)"
-  en: "TAB/SHIFT-TAB: Navigate | ENTER: Confirm (Notes: line break)"
+  pt-BR: "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar (nas Notas, CTRL+ENTER)"
+  en: "TAB/SHIFT-TAB: Navigate | ENTER: Confirm (in Notes, CTRL+ENTER)"
+ui.show_password:
+  pt-BR: "Mostrar senha"
+  en: "Show password"
 ui.footer_form_pass:
   pt-BR: "TAB/SHIFT-TAB: Navegar | ENTER: Confirmar"
   en: "TAB/SHIFT-TAB: Navigate | ENTER: Confirm"

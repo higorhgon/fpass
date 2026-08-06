@@ -1,0 +1,24 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="Main.qml">Main.qml</file>
+        <file alias="DatabasePage.qml">DatabasePage.qml</file>
+        <file alias="EntriesPage.qml">EntriesPage.qml</file>
+        <file alias="ListPane.qml">ListPane.qml</file>
+        <file alias="Modal.qml">Modal.qml</file>
+        <file alias="Field.qml">Field.qml</file>
+        <file alias="SuggestionList.qml">SuggestionList.qml</file>
+        <file alias="ActionsMenu.qml">ActionsMenu.qml</file>
+        <file alias="ChoiceModal.qml">ChoiceModal.qml</file>
+        <file alias="ConfirmModal.qml">ConfirmModal.qml</file>
+        <file alias="CreateDatabaseModal.qml">CreateDatabaseModal.qml</file>
+        <file alias="CreatePassStoreModal.qml">CreatePassStoreModal.qml</file>
+        <file alias="EntryFormModal.qml">EntryFormModal.qml</file>
+        <file alias="EntryInfoModal.qml">EntryInfoModal.qml</file>
+        <file alias="HelpModal.qml">HelpModal.qml</file>
+        <file alias="RenameGroupModal.qml">RenameGroupModal.qml</file>
+        <file alias="UnlockModal.qml">UnlockModal.qml</file>
+        <file alias="locales/app.yml">../locales/app.yml</file>
+        <file alias="fonts/iAWriterMonoS-Regular.ttf">../fonts/iAWriterMonoS-Regular.ttf</file>
+        <file alias="fonts/iAWriterMonoS-Bold.ttf">../fonts/iAWriterMonoS-Bold.ttf</file>
+    </qresource>
+</RCC>

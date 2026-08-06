@@ -1,0 +1,20 @@
+#!/usr/bin/env sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+BUILD_DIR="$ROOT/build-tests"
+
+if command -v qmake6 >/dev/null 2>&1; then
+  QMAKE=qmake6
+elif command -v qmake >/dev/null 2>&1 && qmake -query QT_VERSION | grep -q '^6\.'; then
+  QMAKE=qmake
+else
+  echo "A Qt 6 qmake (qmake6) is required to build the fpass tests." >&2
+  exit 1
+fi
+
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+"$QMAKE" "$ROOT/tests/tests.pro"
+make -j"$(nproc 2>/dev/null || echo 1)"
+QT_QPA_PLATFORM=offscreen ./tst_fpass
