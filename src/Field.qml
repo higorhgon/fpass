@@ -30,7 +30,6 @@ Item {
         anchors.top: parent.top
         text: root.label
         color: root.active ? theme.annotation : theme.guidance
-        font.family: "iA Writer Mono S"
         font.pixelSize: Math.round(12 * root.s)
     }
 
@@ -44,7 +43,6 @@ Item {
         placeholderTextColor: theme.guidance
         selectionColor: theme.selection
         selectedTextColor: theme.base
-        font.family: "iA Writer Mono S"
         font.pixelSize: Math.round(15 * root.s)
         leftPadding: 0
         rightPadding: 0

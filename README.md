@@ -1,22 +1,21 @@
-# fpass
+# omapass
 
 [![CI](https://github.com/higorhgon/fpass/actions/workflows/ci.yml/badge.svg)](https://github.com/higorhgon/fpass/actions/workflows/ci.yml)
 
 Gerenciador de senhas com interface Qt Quick, escrito em C++, que segue o tema
-do Omarchy e o modo claro/escuro do sistema automaticamente. Suporta dois
-backends: **KeePassXC** (.kdbx, via `keepassxc-cli`) e **pass** — the standard
-unix password manager (via `gpg`).
+do Omarchy, a fonte monoespaçada do sistema e o modo claro/escuro
+automaticamente. Suporta dois backends: **KeePassXC** (.kdbx, via
+`keepassxc-cli`) e **pass** — the standard unix password manager (via `gpg`).
 
 Feito na mesma linha do [omacalc](https://github.com/omacom-io/omacalc),
 [omawrite](https://github.com/omacom-io/omawrite) e
 [omacut](https://github.com/omacom-io/omacut): Qt 6 + QML, cores lidas do tema
-ativo do Omarchy e retintadas ao vivo quando o tema muda, tipografia seguindo o
-tamanho de texto do desktop.
+ativo do Omarchy e retintadas ao vivo quando o tema muda.
 
 ## Funcionalidades
 
-- Suporte a KeePassXC e a pass — o fpass detecta ambos automaticamente e adapta a interface a cada um (entradas do pass, por exemplo, têm só Título e Senha, sem Usuário/URL/Notas no formulário)
-- No pass, o fpass guarda a passphrase só durante a sessão e decifra as entradas com ela
+- Suporte a KeePassXC e a pass — o omapass detecta ambos automaticamente e adapta a interface a cada um (entradas do pass, por exemplo, têm só Título e Senha, sem Usuário/URL/Notas no formulário)
+- No pass, o omapass guarda a passphrase só durante a sessão e decifra as entradas com ela
 - Seletor de banco de dados com busca multi-termo e navegação estilo vim
 - Modal integrado para desbloqueio de banco com validação de senha/passphrase
 - Criação de bancos pela própria interface: KeePassXC (nome + senha) ou pass (diretório com autocomplete + escolha de chave GPG existente)
@@ -41,30 +40,26 @@ Para bancos **pass**:
 
 - [`pass`](https://www.passwordstore.org/) instalado
 - `gpg`/`gpg-agent`, com pelo menos uma chave secreta já criada (veja [Configurando o pass](#configurando-o-pass))
-- `gpg-agent` configurado para aceitar a senha via loopback (`allow-loopback-pinentry`) — necessário porque o fpass decifra entradas passando a passphrase pelo stdin do `gpg`, sem abrir um pinentry a cada acesso
+- `gpg-agent` configurado para aceitar a senha via loopback (`allow-loopback-pinentry`) — necessário porque o omapass decifra entradas passando a passphrase pelo stdin do `gpg`, sem abrir um pinentry a cada acesso
 
 A busca por bancos usa [`fd`](https://github.com/sharkdp/fd) quando disponível
 (bem mais rápido em um diretório home inteiro) e cai para uma varredura própria
 quando não está instalado.
 
-A fonte iA Writer Mono é distribuída junto sob a SIL Open Font License 1.1; veja
-`fonts/OFL.txt`. A fonte é copyright Information Architects Inc. e derivada da
-IBM Plex, copyright IBM Corp.
-
 ## Instalação
 
 ```bash
-git clone https://github.com/<usuario>/fpass.git
-cd fpass
+git clone https://github.com/<usuario>/omapass.git
+cd omapass
 ./bin/build
 ```
 
-O binário fica em `build/fpass`. Os testes rodam com `./bin/test`.
+O binário fica em `build/omapass`. Os testes rodam com `./bin/test`.
 
 ## Uso
 
 ```bash
-./build/fpass
+./build/omapass
 ```
 
 O programa busca automaticamente, dentro do diretório configurado (`path` em
@@ -81,8 +76,8 @@ um único banco, ele vai direto para o modal de desbloqueio.
 
 Na tela de seleção, `Ctrl+A` abre um menu perguntando o tipo de banco a criar:
 
-- **KeePassXC** — pede nome do arquivo e senha mestra; o banco é criado em `~/.config/fpass/databases/`.
-- **pass** — pede o diretório de destino (com autocomplete dos nomes de pasta existentes) e uma chave GPG dentre as já presentes no seu chaveiro. O fpass não gera chaves GPG novas — veja a seção abaixo para criar uma.
+- **KeePassXC** — pede nome do arquivo e senha mestra; o banco é criado em `~/.config/omapass/databases/`.
+- **pass** — pede o diretório de destino (com autocomplete dos nomes de pasta existentes) e uma chave GPG dentre as já presentes no seu chaveiro. O omapass não gera chaves GPG novas — veja a seção abaixo para criar uma.
 
 ### Configurando o pass
 
@@ -112,21 +107,21 @@ Isso cria o store em `~/.password-store`. Para criar em outro lugar, defina `PAS
 PASSWORD_STORE_DIR=/caminho/personalizado pass init <SEU-GPG-KEY-ID>
 ```
 
-O fpass encontra automaticamente qualquer diretório com `.gpg-id` dentro do seu diretório de busca configurado (veja `path` em [Configuração](#configuração)) — é possível ter múltiplos password-stores em locais diferentes.
+O omapass encontra automaticamente qualquer diretório com `.gpg-id` dentro do seu diretório de busca configurado (veja `path` em [Configuração](#configuração)) — é possível ter múltiplos password-stores em locais diferentes.
 
-**3. Permita que o gpg-agent aceite a senha via loopback**, para o fpass poder decifrar entradas com a passphrase que já pediu uma vez:
+**3. Permita que o gpg-agent aceite a senha via loopback**, para o omapass poder decifrar entradas com a passphrase que já pediu uma vez:
 
 ```bash
 echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
 gpg-connect-agent reloadagent /bye
 ```
 
-> **Nota:** no pass, o fpass só expõe **Título** e **Senha** no formulário de adicionar/editar — o formato do pass é bem menos estruturado que o do KeePassXC. Campos como usuário/URL/notas de uma entrada já existente são preservados ao editá-la, mesmo sem aparecer no formulário.
+> **Nota:** no pass, o omapass só expõe **Título** e **Senha** no formulário de adicionar/editar — o formato do pass é bem menos estruturado que o do KeePassXC. Campos como usuário/URL/notas de uma entrada já existente são preservados ao editá-la, mesmo sem aparecer no formulário.
 
 ### Migrando um banco KeePassXC para o pass
 
 ```bash
-fpass --kdbx2pass banco.kdbx KEYID1 [KEYID2...]
+omapass --kdbx2pass banco.kdbx KEYID1 [KEYID2...]
 ```
 
 Roda no terminal, sem abrir janela. Inicializa (ou reaponta) o password-store
@@ -137,21 +132,26 @@ texto puro durante o processo.
 
 ## Segurança
 
-- **Backend KeePassXC**: a senha da entrada é sempre passada ao `keepassxc-cli` via stdin, mas `keepassxc-cli` não aceita usuário/URL/notas por stdin — esses campos vão como argumentos (`-u`, `--url`, `--notes`) em `add`/`edit`. Isso é uma limitação do `keepassxc-cli`, não do fpass: durante a execução do processo, outro usuário local com acesso a `/proc/<pid>/cmdline` (ou `ps aux`) pode ler esses valores. A senha em si nunca passa por argv. O backend **pass** não tem essa limitação — toda a entrada (senha e metadados) é enviada por stdin ao `gpg`/`pass insert`.
+- **Backend KeePassXC**: a senha da entrada é sempre passada ao `keepassxc-cli` via stdin, mas `keepassxc-cli` não aceita usuário/URL/notas por stdin — esses campos vão como argumentos (`-u`, `--url`, `--notes`) em `add`/`edit`. Isso é uma limitação do `keepassxc-cli`, não do omapass: durante a execução do processo, outro usuário local com acesso a `/proc/<pid>/cmdline` (ou `ps aux`) pode ler esses valores. A senha em si nunca passa por argv. O backend **pass** não tem essa limitação — toda a entrada (senha e metadados) é enviada por stdin ao `gpg`/`pass insert`.
 - Senhas e passphrases circulam em um tipo `Secret`, que mantém uma cópia própria e sobrescreve a memória ao ser destruído. A exceção inevitável é o campo de senha do formulário de edição: um campo editável precisa do texto em claro enquanto está na tela.
 - Ao copiar uma senha, o conteúdo é marcado como sensível para o `wl-clipboard` (mime `x-kde-passwordManagerHint`, que gerenciadores como o cliphist respeitam para não gravar no histórico) e o clipboard é limpo automaticamente após 10 segundos, com contagem regressiva visível na interface.
-- **`~/.config/fpass/history`** guarda só HMACs (com chave aleatória local em `.history_key`, 0600) e timestamps de uso, nunca o conteúdo das entradas — mas ainda revela para outro usuário local com acesso ao arquivo quantas entradas existem e o padrão de uso.
+- **`~/.config/omapass/history`** guarda só HMACs (com chave aleatória local em `.history_key`, 0600) e timestamps de uso, nunca o conteúdo das entradas — mas ainda revela para outro usuário local com acesso ao arquivo quantas entradas existem e o padrão de uso.
 
 ## Configuração
 
-Arquivos em `~/.config/fpass/`:
+Arquivos em `~/.config/omapass/`:
 
 - `config.toml` — caminho de busca, recency, tema ativo e idioma
 - `themes/*.toml` — sobreposições de cores
 
-`path` define onde o fpass procura **tanto** arquivos `.kdbx` quanto password-stores do pass (diretórios com `.gpg-id`); o `~/.password-store` convencional é sempre verificado, mesmo que `path` aponte para outro lugar.
+> **Vindo do fpass:** se `~/.config/omapass` não existir e `~/.config/fpass`
+> existir, o omapass continua usando o diretório antigo — histórico, temas e
+> bancos criados pela interface seguem funcionando sem nenhum passo manual.
+> Para adotar o nome novo, basta `mv ~/.config/fpass ~/.config/omapass`.
 
-`language` controla o idioma da interface, em ordem de prioridade: (1) valor explícito no config.toml (`"pt-BR"`/`"en"`); (2) na ausência de um valor explícito (`"auto"` ou omitido), autodetecção pelo `$LANG`/`$LC_ALL` do sistema; (3) se nada foi configurado nem detectado, o padrão é inglês. Só o texto gerado pelo próprio fpass é traduzido — mensagens de erro que vêm direto do `keepassxc-cli`, `pass` ou `gpg` continuam no idioma dessas ferramentas, fora do controle do fpass.
+`path` define onde o omapass procura **tanto** arquivos `.kdbx` quanto password-stores do pass (diretórios com `.gpg-id`); o `~/.password-store` convencional é sempre verificado, mesmo que `path` aponte para outro lugar.
+
+`language` controla o idioma da interface, em ordem de prioridade: (1) valor explícito no config.toml (`"pt-BR"`/`"en"`); (2) na ausência de um valor explícito (`"auto"` ou omitido), autodetecção pelo `$LANG`/`$LC_ALL` do sistema; (3) se nada foi configurado nem detectado, o padrão é inglês. Só o texto gerado pelo próprio omapass é traduzido — mensagens de erro que vêm direto do `keepassxc-cli`, `pass` ou `gpg` continuam no idioma dessas ferramentas, fora do controle do omapass.
 
 Exemplo de `config.toml`:
 
@@ -167,12 +167,12 @@ language = "pt-BR"
 
 Por padrão (`theme = "default"`) as cores vêm do tema ativo do Omarchy, em
 `~/.local/state/omarchy/current/theme/colors.toml`, e são reaplicadas na hora
-quando você troca de tema — não é preciso reiniciar o fpass. Sem Omarchy
-instalado, o fpass usa Catppuccin Mocha ou Latte conforme a preferência
+quando você troca de tema — não é preciso reiniciar o omapass. Sem Omarchy
+instalado, o omapass usa Catppuccin Mocha ou Latte conforme a preferência
 clara/escura do desktop.
 
 Um tema próprio sobrepõe apenas os papéis que ele declarar; o resto continua
-vindo do Omarchy. Em `~/.config/fpass/themes/tema.toml`:
+vindo do Omarchy. Em `~/.config/omapass/themes/tema.toml`:
 
 ```toml
 [theme]
@@ -188,8 +188,23 @@ e então `theme = "meu-tema"` no `config.toml`. Os papéis disponíveis são
 `Title`, `Base`, `Guidance`, `Annotation`, `Important`, `AlertInfo`,
 `AlertWarn` e `AlertError`.
 
-O tamanho do texto segue o do desktop — `omarchy display text size`, ou o
-`text-scaling-factor` do GNOME.
+### Fonte e tamanho do texto
+
+O omapass não embute nenhuma fonte: a interface inteira usa a família genérica
+`monospace`, que é exatamente o que o `omarchy font set` configura em
+`~/.config/fontconfig/fonts.conf`. Trocar a fonte do sistema troca a do
+omapass:
+
+```bash
+omarchy font list
+omarchy font set "CaskaydiaMono Nerd Font"
+```
+
+Como o Qt resolve o fontconfig na inicialização, a mudança aparece ao reabrir o
+omapass — o mesmo comportamento que o Omarchy avisa para o Ghostty e o Foot.
+
+O tamanho do texto segue o do desktop, ao vivo — `omarchy display text size`,
+ou o `text-scaling-factor` do GNOME.
 
 ## Atalhos
 

@@ -1,17 +1,17 @@
 _version: 2
 
 cli.version:
-  pt-BR: "fpass versão %{version}"
-  en: "fpass version %{version}"
+  pt-BR: "omapass versão %{version}"
+  en: "omapass version %{version}"
 cli.help_title:
-  pt-BR: "fpass - Gerenciador de senhas para KeePassXC e pass"
-  en: "fpass - Password manager for KeePassXC and pass"
+  pt-BR: "omapass - Gerenciador de senhas para KeePassXC e pass"
+  en: "omapass - Password manager for KeePassXC and pass"
 cli.help_usage_header:
   pt-BR: "Uso:"
   en: "Usage:"
 cli.help_usage_line:
-  pt-BR: "  fpass [opções]"
-  en: "  fpass [options]"
+  pt-BR: "  omapass [opções]"
+  en: "  omapass [options]"
 cli.help_options_header:
   pt-BR: "Opções:"
   en: "Options:"
@@ -28,8 +28,8 @@ cli.help_kdbx2pass_2:
   pt-BR: "do pass, encriptado para os KEYIDs informados"
   en: "for pass, encrypted for the given KEYIDs"
 cli.kdbx2pass_usage:
-  pt-BR: "Uso: fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]"
-  en: "Usage: fpass --kdbx2pass <database.kdbx> <KEYID1> [KEYID2...]"
+  pt-BR: "Uso: omapass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]"
+  en: "Usage: omapass --kdbx2pass <database.kdbx> <KEYID1> [KEYID2...]"
 
 app.empty_group:
   pt-BR: "Isso é um grupo vazio!"
@@ -221,9 +221,9 @@ help.enter_search:
 help.this_help:
   pt-BR: "Esta ajuda"
   en: "This help"
-help.quit_fpass:
-  pt-BR: "Sair do fpass"
-  en: "Quit fpass"
+help.quit_app:
+  pt-BR: "Sair do omapass"
+  en: "Quit omapass"
 
 # --- db_app.rs ---
 db_app.no_gpg_key_selected:

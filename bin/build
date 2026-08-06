@@ -9,7 +9,7 @@ if command -v qmake6 >/dev/null 2>&1; then
 elif command -v qmake >/dev/null 2>&1 && qmake -query QT_VERSION | grep -q '^6\.'; then
   QMAKE=qmake
 else
-  echo "A Qt 6 qmake (qmake6) is required to build fpass." >&2
+  echo "A Qt 6 qmake (qmake6) is required to build omapass." >&2
   exit 1
 fi
 
@@ -18,7 +18,7 @@ JOBS="$(nproc 2>/dev/null || echo 1)"
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-"$QMAKE" "$ROOT/fpass.pro"
+"$QMAKE" "$ROOT/omapass.pro"
 make -j"$JOBS"
 
-echo "Built $BUILD_DIR/fpass"
+echo "Built $BUILD_DIR/omapass"

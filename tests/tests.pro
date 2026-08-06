@@ -1,12 +1,12 @@
 QT += core testlib
 CONFIG += testcase c++17
 TEMPLATE = app
-TARGET = tst_fpass
+TARGET = tst_omapass
 
 INCLUDEPATH += ../src
 
 SOURCES += \
-    tst_fpass.cpp \
+    tst_omapass.cpp \
     ../src/config.cpp \
     ../src/filter.cpp \
     ../src/history.cpp \

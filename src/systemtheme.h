@@ -13,7 +13,7 @@ class QDBusVariant;
 class SystemTheme : public QObject {
     Q_OBJECT
     // Declared as properties (Omacalc reads them from C++ only) because the
-    // fpass interface sizes itself against the text scale directly.
+    // omapass interface sizes itself against the text scale directly.
     Q_PROPERTY(bool darkMode READ darkMode NOTIFY darkModeChanged)
     Q_PROPERTY(qreal textScale READ textScale NOTIFY textScaleChanged)
 

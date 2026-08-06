@@ -52,7 +52,6 @@ Modal {
                 anchors.leftMargin: Math.round(10 * root.s)
                 text: modelData
                 color: theme.base
-                font.family: "iA Writer Mono S"
                 font.pixelSize: Math.round(14 * root.s)
             }
 

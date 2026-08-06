@@ -147,7 +147,6 @@ Modal {
     CheckBox {
         id: revealPassword
         text: i18n.t("ui.show_password")
-        font.family: "iA Writer Mono S"
         font.pixelSize: Math.round(12 * root.s)
         // Never steals the Tab order from the fields around it.
         focusPolicy: Qt.NoFocus
@@ -200,7 +199,6 @@ Modal {
         Text {
             text: i18n.t("common.notes_label")
             color: notesArea.activeFocus ? theme.annotation : theme.guidance
-            font.family: "iA Writer Mono S"
             font.pixelSize: Math.round(12 * root.s)
         }
 
@@ -214,7 +212,6 @@ Modal {
                 selectionColor: theme.selection
                 selectedTextColor: theme.base
                 wrapMode: TextArea.Wrap
-                font.family: "iA Writer Mono S"
                 font.pixelSize: Math.round(14 * root.s)
 
                 background: Rectangle {

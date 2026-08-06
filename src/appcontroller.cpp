@@ -256,7 +256,7 @@ QVariantMap AppController::entryDetails(const QString &entry) {
 }
 
 // The password comes back in the clear because an editable field has to hold
-// it; it is the one place fpass cannot keep a secret inside `Secret` alone.
+// it; it is the one place omapass cannot keep a secret inside `Secret` alone.
 QVariantMap AppController::entryFields(const QString &entry) {
     QVariantMap fields;
     fields.insert(QStringLiteral("originalPath"), entry);

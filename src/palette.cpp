@@ -19,8 +19,8 @@ QString omarchyColorsPath() {
     return omarchyThemeDir() + QStringLiteral("/colors.toml");
 }
 
-// Catppuccin Mocha / Latte, the palettes fpass shipped before it followed the
-// desktop. Only reached when no Omarchy theme is installed.
+// Catppuccin Mocha / Latte, the palettes carried over from the TUI version.
+// Only reached when no Omarchy theme is installed.
 struct Fallback {
     QColor background, surface, selection, base, title, guidance;
     QColor annotation, important, alertInfo, alertWarn, alertError;

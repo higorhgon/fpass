@@ -33,8 +33,19 @@ QString unquote(QString value) {
 
 namespace Config {
 
+// ~/.config/omapass, except on a machine that still has the ~/.config/fpass
+// this app used to be called: that one keeps being used, so an existing
+// history, theme and set of created databases survive the rename untouched.
+// Move the directory yourself to adopt the new name.
 QString configDir() {
-    return home() + QStringLiteral("/.config/fpass");
+    static const QString directory = []() {
+        const QString current = home() + QStringLiteral("/.config/omapass");
+        const QString legacy = home() + QStringLiteral("/.config/fpass");
+        if (!QDir(current).exists() && QDir(legacy).exists())
+            return legacy;
+        return current;
+    }();
+    return directory;
 }
 
 QString themesDir() {

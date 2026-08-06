@@ -18,7 +18,7 @@ QString keepassDatabaseDir() {
 }
 
 // Finds files matching `pattern` under `path`. Prefers `fd`, which is what
-// fpass has always used and is markedly faster over a whole home directory;
+// omapass has always used and is markedly faster over a whole home directory;
 // falls back to walking the tree when it is not installed.
 QStringList findFiles(const QString &pattern, const QString &path, bool includeHidden) {
     QStringList results;

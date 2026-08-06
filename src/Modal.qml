@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 
-// Shared frame for every sheet fpass puts over the list: a bordered card,
+// Shared frame for every sheet omapass puts over the list: a bordered card,
 // a heading in the accent colour, and a hint line at the bottom — the same
 // three parts the boxed modals of the TUI had.
 //
@@ -102,7 +102,6 @@ Popup {
             text: root.heading
             color: root.accentColor
             elide: Text.ElideMiddle
-            font.family: "iA Writer Mono S"
             font.bold: true
             font.pixelSize: Math.round(15 * root.s)
         }
@@ -134,7 +133,6 @@ Popup {
             color: root.hintColor
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            font.family: "iA Writer Mono S"
             font.pixelSize: Math.round(12 * root.s)
         }
     }

@@ -18,7 +18,5 @@
         <file alias="RenameGroupModal.qml">RenameGroupModal.qml</file>
         <file alias="UnlockModal.qml">UnlockModal.qml</file>
         <file alias="locales/app.yml">../locales/app.yml</file>
-        <file alias="fonts/iAWriterMonoS-Regular.ttf">../fonts/iAWriterMonoS-Regular.ttf</file>
-        <file alias="fonts/iAWriterMonoS-Bold.ttf">../fonts/iAWriterMonoS-Bold.ttf</file>
     </qresource>
 </RCC>

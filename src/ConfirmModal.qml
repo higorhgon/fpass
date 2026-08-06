@@ -36,7 +36,6 @@ Modal {
         color: theme.base
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
-        font.family: "iA Writer Mono S"
         font.pixelSize: Math.round(14 * root.s)
     }
 }

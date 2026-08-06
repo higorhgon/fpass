@@ -1,7 +1,7 @@
 QT += core gui qml quick quickcontrols2 dbus
 
 CONFIG += c++17 release
-TARGET = fpass
+TARGET = omapass
 TEMPLATE = app
 
 HEADERS += \

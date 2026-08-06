@@ -26,7 +26,7 @@ AppConfig load();
 // value and the environment, in that order of priority.
 QString resolveLanguage(const QString &configured, const QString &langEnv, const QString &lcAllEnv);
 
-// Minimal TOML reader for the flat `[section] key = "value"` files fpass and
+// Minimal TOML reader for the flat `[section] key = "value"` files omapass and
 // Omarchy both use. Keys come back as "section.key" (or bare "key" outside a
 // section). Not a general TOML parser — it does not need to be.
 QHash<QString, QString> readFlatToml(const QString &path);

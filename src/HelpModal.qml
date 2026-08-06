@@ -31,7 +31,6 @@ Modal {
             Text {
                 text: modelData.title
                 color: theme.title
-                font.family: "iA Writer Mono S"
                 font.bold: true
                 font.pixelSize: Math.round(13 * root.s)
                 bottomPadding: Math.round(3 * root.s)
@@ -49,14 +48,12 @@ Modal {
                         width: Math.round(150 * root.s)
                         text: modelData[0]
                         color: theme.annotation
-                        font.family: "iA Writer Mono S"
                         font.pixelSize: Math.round(13 * root.s)
                     }
 
                     Text {
                         text: modelData[1]
                         color: theme.base
-                        font.family: "iA Writer Mono S"
                         font.pixelSize: Math.round(13 * root.s)
                     }
                 }

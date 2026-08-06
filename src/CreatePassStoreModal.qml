@@ -1,7 +1,7 @@
 import QtQuick
 
 // Initialises a new pass store: where it lives, and which of the GPG keys
-// already in the keyring it encrypts to. fpass never generates GPG keys.
+// already in the keyring it encrypts to. omapass never generates GPG keys.
 Modal {
     id: root
 
@@ -77,7 +77,6 @@ Modal {
         width: parent.width
         text: i18n.t("db_app.gpg_key_label")
         color: keyList.activeFocus ? theme.annotation : theme.guidance
-        font.family: "iA Writer Mono S"
         font.pixelSize: Math.round(12 * root.s)
     }
 
@@ -87,7 +86,6 @@ Modal {
         text: i18n.t("db_app.no_gpg_key_found")
         color: theme.alertWarn
         wrapMode: Text.WordWrap
-        font.family: "iA Writer Mono S"
         font.pixelSize: Math.round(13 * root.s)
     }
 

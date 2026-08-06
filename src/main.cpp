@@ -1,7 +1,6 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QFont>
-#include <QFontDatabase>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
@@ -26,7 +25,7 @@ void printHelp(QTextStream &out) {
     out << I18n::t(QStringLiteral("cli.help_title")) << "\n\n"
         << I18n::t(QStringLiteral("cli.help_usage_header")) << '\n'
         << I18n::t(QStringLiteral("cli.help_usage_line")) << '\n'
-        << "  fpass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]\n\n"
+        << "  omapass --kdbx2pass <banco.kdbx> <KEYID1> [KEYID2...]\n\n"
         << I18n::t(QStringLiteral("cli.help_options_header")) << '\n'
         << "  -v, --version      " << I18n::t(QStringLiteral("cli.help_version")) << '\n'
         << "  -h, --help         " << I18n::t(QStringLiteral("cli.help_help")) << '\n'
@@ -63,7 +62,7 @@ int runCommandLine(int argc, char *argv[], const QStringList &args, bool *handle
 
         const QString error = Kdbx2Pass::run(args.at(2), args.mid(3));
         if (!error.isEmpty()) {
-            err << "fpass --kdbx2pass: " << error << '\n';
+            err << "omapass --kdbx2pass: " << error << '\n';
             return 1;
         }
         return 0;
@@ -93,14 +92,11 @@ int main(int argc, char *argv[]) {
     }
 
     QGuiApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("fpass"));
+    app.setApplicationName(QStringLiteral("omapass"));
     app.setApplicationVersion(applicationVersion);
-    app.setOrganizationName(QStringLiteral("fpass"));
-    app.setDesktopFileName(QStringLiteral("fpass"));
-    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("fpass")));
-
-    QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/iAWriterMonoS-Regular.ttf"));
-    QFontDatabase::addApplicationFont(QStringLiteral(":/fonts/iAWriterMonoS-Bold.ttf"));
+    app.setOrganizationName(QStringLiteral("omapass"));
+    app.setDesktopFileName(QStringLiteral("omapass"));
+    app.setWindowIcon(QIcon::fromTheme(QStringLiteral("omapass")));
 
     // Basic rather than Material: every control here is drawn against the
     // Omarchy palette, and Material's own chrome (filled text containers,
@@ -113,9 +109,13 @@ int main(int argc, char *argv[]) {
     QObject::connect(&systemTheme, &SystemTheme::darkModeChanged, &palette,
                      &Palette::setSystemDarkMode);
 
-    // Carry the desktop's text scale into the default font, so the chrome
-    // that inherits it (menus, dialogs) grows along with the interface.
-    const QFont interfaceFont(QStringLiteral("iA Writer Mono S"));
+    // The whole interface inherits this one font, so nothing names a family
+    // of its own. "monospace" is the generic family fontconfig resolves, and
+    // `omarchy font set` writes exactly that rule into
+    // ~/.config/fontconfig/fonts.conf — so the desktop's chosen monospace is
+    // what omapass draws with. Its size follows the desktop text scale, which
+    // keeps the chrome (menus, dialogs) growing with the rest.
+    const QFont interfaceFont(QStringLiteral("monospace"));
     const qreal basePointSize = interfaceFont.pointSizeF() > 0 ? interfaceFont.pointSizeF()
                                                                : app.font().pointSizeF();
     const auto applyInterfaceFont = [&app, interfaceFont, basePointSize](qreal textScale) {
@@ -147,7 +147,7 @@ int main(int argc, char *argv[]) {
 
     engine.load(QUrl(QStringLiteral("qrc:/Main.qml")));
     if (engine.rootObjects().isEmpty()) {
-        qCritical() << "Could not load the fpass interface; resource available:"
+        qCritical() << "Could not load the omapass interface; resource available:"
                     << QFile::exists(QStringLiteral(":/Main.qml"));
         return -1;
     }

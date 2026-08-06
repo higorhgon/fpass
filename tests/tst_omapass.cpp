@@ -8,7 +8,7 @@
 #include "passstore.h"
 #include "secret.h"
 
-class TestFpass : public QObject {
+class TestOmapass : public QObject {
     Q_OBJECT
 
 private slots:
@@ -187,5 +187,5 @@ private slots:
     }
 };
 
-QTEST_MAIN(TestFpass)
-#include "tst_fpass.moc"
+QTEST_MAIN(TestOmapass)
+#include "tst_omapass.moc"

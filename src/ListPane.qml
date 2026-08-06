@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 
 // The search line, the list and the hint footer — the shape both stages of
-// fpass share — together with the whole keyboard vocabulary. The pages above
+// omapass share — together with the whole keyboard vocabulary. The pages above
 // decide what each gesture means; nothing here knows about vaults.
 FocusScope {
     id: pane
@@ -124,7 +124,6 @@ FocusScope {
                 placeholderText: pane.searchPlaceholder
                 placeholderTextColor: theme.guidance
                 color: theme.base
-                font.family: "iA Writer Mono S"
                 font.pixelSize: Math.round(17 * pane.s)
                 selectionColor: theme.selection
                 selectedTextColor: theme.base
@@ -230,7 +229,6 @@ FocusScope {
                             visible: row.tag.length > 0
                             text: row.tag
                             color: theme.annotation
-                            font.family: "iA Writer Mono S"
                             font.pixelSize: Math.round(15 * pane.s)
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -240,7 +238,6 @@ FocusScope {
                             text: row.itemText
                             color: theme.base
                             elide: Text.ElideMiddle
-                            font.family: "iA Writer Mono S"
                             font.pixelSize: Math.round(15 * pane.s)
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -280,7 +277,6 @@ FocusScope {
             color: pane.footerColor
             horizontalAlignment: Text.AlignHCenter
             wrapMode: Text.WordWrap
-            font.family: "iA Writer Mono S"
             font.pixelSize: Math.round(13 * pane.s)
         }
     }

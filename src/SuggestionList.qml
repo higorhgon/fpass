@@ -62,7 +62,6 @@ Item {
                 text: root.labelFor(modelData)
                 color: theme.base
                 elide: Text.ElideMiddle
-                font.family: "iA Writer Mono S"
                 font.pixelSize: Math.round(13 * root.s)
             }
 

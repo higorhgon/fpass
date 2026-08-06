@@ -90,7 +90,6 @@ Popup {
                     anchors.leftMargin: Math.round(8 * root.s)
                     text: modelData
                     color: theme.base
-                    font.family: "iA Writer Mono S"
                     font.pixelSize: Math.round(13 * root.s)
                 }
 

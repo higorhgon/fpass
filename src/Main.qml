@@ -10,7 +10,7 @@ ApplicationWindow {
     minimumWidth: 460
     minimumHeight: 340
     visible: true
-    title: "fpass"
+    title: "omapass"
 
     // Every size in the interface is written against the desktop's text
     // scale, so the whole face grows with `omarchy display text size` the way

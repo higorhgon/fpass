@@ -146,7 +146,7 @@ bool PassStore::removeGroup(const QString &group, QString *error) const {
 }
 
 // Decrypts through gpg directly with `--pinentry-mode loopback`, taking the
-// passphrase on stdin instead of relying on an external pinentry — fpass
+// passphrase on stdin instead of relying on an external pinentry — omapass
 // holds the passphrase for the session and unlocks entries with it.
 bool PassStore::show(const QString &entry, const Secret &passphrase, PassEntryData *data,
                      QString *error) const {

@@ -43,7 +43,6 @@ Modal {
         Text {
             text: fieldColumn.label
             color: text.activeFocus ? theme.annotation : theme.guidance
-            font.family: "iA Writer Mono S"
             font.pixelSize: Math.round(12 * root.s)
         }
 
@@ -61,7 +60,6 @@ Modal {
                 selectionColor: theme.annotation
                 selectedTextColor: theme.background
                 wrapMode: TextEdit.Wrap
-                font.family: "iA Writer Mono S"
                 font.pixelSize: Math.round(14 * root.s)
 
                 // Copying once the selection settles reproduces the TUI's

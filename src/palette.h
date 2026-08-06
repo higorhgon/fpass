@@ -10,7 +10,7 @@
 // (~/.local/state/omarchy/current/theme/colors.toml) and re-read whenever the
 // desktop switches themes.
 //
-// The semantic role names are the ones fpass has always used in its own theme
+// The semantic role names are the ones omapass has always used in its own theme
 // files (Title, Base, Guidance, …), so a `~/.config/fpass/themes/*.toml`
 // still pins whatever it pins — those overrides are applied last and win
 // over the Omarchy palette.
